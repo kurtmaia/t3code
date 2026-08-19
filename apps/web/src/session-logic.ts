@@ -1048,11 +1048,10 @@ function collapseDerivedWorkLogEntries(
       const matchingLifecycleIndex = toolLifecycleRowIndex.get(lifecycleKey);
       if (matchingLifecycleIndex !== undefined) {
         const matchingEntry = collapsed[matchingLifecycleIndex];
-        if (matchingEntry?.activityKind === "tool.completed") {
-          collapsed[matchingLifecycleIndex] =
-            entry.activityKind === "tool.completed"
-              ? mergeDerivedWorkLogEntries(matchingEntry, entry)
-              : mergeDerivedWorkLogEntries(entry, matchingEntry);
+        if (matchingEntry && workLogEntryHasTerminalToolLifecycle(matchingEntry)) {
+          collapsed[matchingLifecycleIndex] = workLogEntryHasTerminalToolLifecycle(entry)
+            ? mergeDerivedWorkLogEntries(matchingEntry, entry)
+            : mergeDerivedWorkLogEntries(entry, matchingEntry);
           continue;
         }
         if (matchingEntry && shouldCollapseToolLifecycleEntries(matchingEntry, entry)) {
@@ -1140,6 +1139,16 @@ function shouldCollapseToolLifecycleEntries(
     previous.itemType === next.itemType &&
     normalizeCompactToolLabel(previous.toolTitle ?? previous.label) ===
       normalizeCompactToolLabel(next.toolTitle ?? next.label)
+  );
+}
+
+function workLogEntryHasTerminalToolLifecycle(entry: DerivedWorkLogEntry): boolean {
+  return (
+    entry.activityKind === "tool.completed" ||
+    entry.toolLifecycleStatus === "completed" ||
+    entry.toolLifecycleStatus === "failed" ||
+    entry.toolLifecycleStatus === "declined" ||
+    entry.toolLifecycleStatus === "stopped"
   );
 }
 

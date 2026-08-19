@@ -282,6 +282,7 @@ describe("buildThreadFeed", () => {
       kind: "tool.updated" | "tool.completed",
       toolCallId: string,
       title: string,
+      status?: "inProgress" | "completed" | "failed" | "declined" | "stopped",
     ) =>
       makeActivity({
         id: EventId.make(id),
@@ -295,6 +296,7 @@ describe("buildThreadFeed", () => {
           toolCallId,
           title,
           detail: title,
+          ...(status ? { status } : {}),
         },
       });
     const thread = makeThread({
@@ -346,6 +348,22 @@ describe("buildThreadFeed", () => {
           "First call complete",
         ),
         lifecycleActivity(
+          "tool-c-failed",
+          "2026-04-01T00:00:03.875Z",
+          "tool.updated",
+          "call-c",
+          "Third call failed",
+          "failed",
+        ),
+        lifecycleActivity(
+          "tool-c-late-updated",
+          "2026-04-01T00:00:03.900Z",
+          "tool.updated",
+          "call-c",
+          "Late third update",
+          "inProgress",
+        ),
+        lifecycleActivity(
           "tool-b-completed",
           "2026-04-01T00:00:04.000Z",
           "tool.completed",
@@ -360,8 +378,10 @@ describe("buildThreadFeed", () => {
     if (!group || group.type !== "activity-group") return;
     expect(group.activities.map((activity) => activity.id)).toEqual([
       "tool-a-completed-duplicate",
+      "tool-c-failed",
       "tool-b-completed",
     ]);
+    expect(group.activities[1]?.status).toBe("failure");
   });
 
   it("keeps MCP inputs available to expanded mobile work rows", () => {

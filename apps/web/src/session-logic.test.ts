@@ -1866,6 +1866,63 @@ describe("deriveWorkLogEntries", () => {
     });
   });
 
+  it("keeps a terminal tool status when stale lifecycle events arrive", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tool-a-failed",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Command failed",
+        turnId: "turn-1",
+        payload: {
+          itemType: "command_execution",
+          status: "failed",
+          data: { toolCallId: "tool-a" },
+        },
+      }),
+      makeActivity({
+        id: "tool-b-updated",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Running another command",
+        turnId: "turn-1",
+        payload: {
+          itemType: "command_execution",
+          status: "inProgress",
+          data: { toolCallId: "tool-b" },
+        },
+      }),
+      makeActivity({
+        id: "tool-a-late-update",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.updated",
+        summary: "Running command",
+        turnId: "turn-1",
+        payload: {
+          itemType: "command_execution",
+          status: "inProgress",
+          data: { toolCallId: "tool-a" },
+        },
+      }),
+      makeActivity({
+        id: "tool-a-late-start",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        kind: "tool.started",
+        summary: "Running command",
+        turnId: "turn-1",
+        payload: {
+          itemType: "command_execution",
+          data: { toolCallId: "tool-a" },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+
+    expect(entries.map((entry) => entry.id)).toEqual(["tool-a-failed", "tool-b-updated"]);
+    expect(entries[0]?.toolLifecycleStatus).toBe("failed");
+  });
+
   it("keeps separate tool entries when an identical call starts after the prior one completed", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
