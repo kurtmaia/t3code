@@ -726,7 +726,9 @@ export function deriveMessagesTimelineRows(input: {
     (unsettledTurnId === null || timelineEntryTurnId(entry) === unsettledTurnId);
   const isVisibleActiveToolEntry = (entry: WorkLogEntry) =>
     workLogEntryIsToolLike(entry) &&
-    (entry.toolLifecycleStatus === "inProgress" || !workEntryIndicatesToolNeutralStatus(entry));
+    (entry.sourceActivityKind === "task.progress" ||
+      entry.toolLifecycleStatus === "inProgress" ||
+      !workEntryIndicatesToolNeutralStatus(entry));
   const activeEntries = input.isWorking
     ? input.timelineEntries.filter((entry, index) => entryBelongsToActiveTurn(entry, index))
     : [];

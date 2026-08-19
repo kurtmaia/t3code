@@ -1,4 +1,14 @@
-import { CheckpointRef, EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
+import {
+  CheckpointRef,
+  EnvironmentId,
+  MessageId,
+  TurnId,
+  type OrchestrationThreadActivity,
+} from "@t3tools/contracts";
+import {
+  deriveAgentPanelModel,
+  foldSubagentActivities,
+} from "@t3tools/client-runtime/state/subagentRuntime";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
@@ -262,6 +272,64 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("ml-auto flex shrink-0");
     expect(markup).toContain(">Completed</span>");
     expect(markup).not.toContain("sr-only @[32rem]/agent-group:hidden");
+  });
+
+  it.each([
+    ["failed", "Failed"],
+    ["cancelled", "Cancelled"],
+    ["interrupted", "Interrupted"],
+  ] as const)("shows a %s workflow as an error", (status, label) => {
+    const activities = [
+      {
+        id: "workflow-start",
+        tone: "info",
+        kind: "task.started",
+        summary: "Started workflow",
+        payload: {
+          taskId: "workflow-1",
+          taskType: "local_workflow",
+          agentKind: "agent",
+        },
+        turnId: null,
+        createdAt: MESSAGE_CREATED_AT,
+      },
+      {
+        id: "workflow-terminal",
+        tone: "info",
+        kind: "task.updated",
+        summary: `${label} workflow`,
+        payload: { taskId: "workflow-1", status },
+        turnId: null,
+        createdAt: MESSAGE_CREATED_AT,
+      },
+    ] as unknown as ReadonlyArray<OrchestrationThreadActivity>;
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        agentPanelModel={deriveAgentPanelModel({ agents: foldSubagentActivities(activities) })}
+        timelineEntries={[
+          {
+            id: "agent-spawn-entry",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "agent-spawn",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "Spawned agent",
+              tone: "info",
+              agentSpawn: {
+                workflowId: "workflow-1",
+                agentTaskIds: ["workflow-1", "member-1"],
+              },
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("bg-destructive");
+    expect(markup).toContain(`>${label}</span>`);
+    expect(markup).not.toContain(">Completed</span>");
   });
 
   it("keeps the compact working and thinking rows aligned", () => {

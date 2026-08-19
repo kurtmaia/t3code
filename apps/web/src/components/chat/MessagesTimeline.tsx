@@ -2530,7 +2530,16 @@ const AgentSpawnCtaRow = memo(function AgentSpawnCtaRow(props: { workEntry: Time
   // One steady in-flight presentation (monitoring-pill rule): waiting and
   // stalled agents read as working; only settled states differentiate.
   const working = running + waiting;
-  const dotClass = live ? "bg-info" : failed > 0 ? "bg-destructive" : "bg-success";
+  const coordinatorFailureLabel =
+    coordinatorStatus === "failed"
+      ? "Failed"
+      : coordinatorStatus === "cancelled"
+        ? "Cancelled"
+        : coordinatorStatus === "interrupted"
+          ? "Interrupted"
+          : null;
+  const hasFailure = failed > 0 || coordinatorFailureLabel !== null;
+  const dotClass = live ? "bg-info" : hasFailure ? "bg-destructive" : "bg-success";
   const lead = live
     ? `Kicked off ${agentCount} subagent${agentCount === 1 ? "" : "s"}`
     : `Ran ${agentCount} subagent${agentCount === 1 ? "" : "s"}`;
@@ -2540,9 +2549,7 @@ const AgentSpawnCtaRow = memo(function AgentSpawnCtaRow(props: { workEntry: Time
       : working > 0
         ? `${working} working`
         : "working"
-    : failed > 0
-      ? `${failed} failed`
-      : "Completed";
+    : (coordinatorFailureLabel ?? (failed > 0 ? `${failed} failed` : "Completed"));
 
   return (
     <div className="@container/agent-group -mx-1 rounded-2xl border border-border/70 bg-secondary p-2 dark:border-transparent dark:bg-input/32">

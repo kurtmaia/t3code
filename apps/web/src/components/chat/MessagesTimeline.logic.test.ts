@@ -1574,6 +1574,46 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows.find((row) => row.kind === "working")).toMatchObject({ showThinking: true });
   });
 
+  it("keeps task progress in the single live activity line", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "task-progress-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:01Z",
+          entry: {
+            id: "task-progress",
+            createdAt: "2026-01-01T00:00:01Z",
+            turnId: "turn-1" as never,
+            taskId: "task-1",
+            label: "Reviewing changes",
+            tone: "thinking" as const,
+            sourceActivityKind: "task.progress" as const,
+          },
+        },
+      ],
+      latestTurn: {
+        turnId: "turn-1" as never,
+        state: "running",
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: null,
+      },
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.map((row) => row.id)).toEqual([
+      "working-indicator-row",
+      "work-live:task-progress-entry",
+    ]);
+    expect(rows.find((row) => row.kind === "work-live")).toMatchObject({
+      entry: { id: "task-progress" },
+    });
+    expect(rows.find((row) => row.kind === "working")).toMatchObject({ showThinking: false });
+  });
+
   it("keeps the current tool batch live before an empty assistant placeholder", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
