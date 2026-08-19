@@ -884,6 +884,10 @@ describe("MessagesTimeline", () => {
 
   it.each<[string, string]>([
     ['"C:\\Program Files\\nodejs\\node.exe" script.js', "Running node.exe"],
+    ["C:\\Python311\\python.exe script.py", "Running python.exe"],
+    ["FOO=$(printf '%s' value) npm test", "Running npm"],
+    ["/tmp/my\\ tool --version", "Running my tool"],
+    ["FOO=$(printf value npm test", "Running command"],
     ["env -S 'python -O'", "Running python"],
     ["env --split-string='python -O'", "Running python"],
     ["env -v npm test", "Running npm"],

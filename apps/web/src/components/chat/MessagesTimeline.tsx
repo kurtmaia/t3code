@@ -2235,6 +2235,7 @@ function tokenizeShellCommand(command: string): string[] | null {
   let current = "";
   let quote: '"' | "'" | null = null;
   let escaping = false;
+  let substitutionDepth = 0;
   let tokenStarted = false;
 
   for (let index = 0; index < input.length; index += 1) {
@@ -2247,8 +2248,9 @@ function tokenizeShellCommand(command: string): string[] | null {
     }
     if (character === "\\" && quote !== "'") {
       const nextCharacter = input[index + 1];
+      const isWindowsDrivePath = quote === null && /^[A-Za-z]:/.test(current);
       if (
-        quote === '"' &&
+        (quote === '"' || isWindowsDrivePath) &&
         nextCharacter !== undefined &&
         nextCharacter !== '"' &&
         nextCharacter !== "\\" &&
@@ -2273,12 +2275,30 @@ function tokenizeShellCommand(command: string): string[] | null {
       tokenStarted = true;
       continue;
     }
+    if (character === "$" && input[index + 1] === "(") {
+      current += "$(";
+      substitutionDepth += 1;
+      tokenStarted = true;
+      index += 1;
+      continue;
+    }
+    if (character === ")" && substitutionDepth > 0) {
+      current += character;
+      substitutionDepth -= 1;
+      tokenStarted = true;
+      continue;
+    }
     if (character === '"' || character === "'") {
       quote = character;
       tokenStarted = true;
       continue;
     }
     if (/\s/u.test(character)) {
+      if (substitutionDepth > 0) {
+        current += character;
+        tokenStarted = true;
+        continue;
+      }
       if (tokenStarted) {
         tokens.push(current);
         current = "";
@@ -2290,7 +2310,7 @@ function tokenizeShellCommand(command: string): string[] | null {
     tokenStarted = true;
   }
 
-  if (quote !== null || escaping) return null;
+  if (quote !== null || escaping || substitutionDepth > 0) return null;
   if (tokenStarted) tokens.push(current);
   return tokens;
 }
