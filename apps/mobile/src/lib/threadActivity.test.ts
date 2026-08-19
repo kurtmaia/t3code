@@ -274,7 +274,7 @@ describe("buildThreadFeed", () => {
     );
   });
 
-  it("collapses interleaved lifecycle rows by top-level tool identity", () => {
+  it("collapses interleaved and late lifecycle rows by top-level tool identity", () => {
     const turnId = TurnId.make("turn-interleaved-tools");
     const lifecycleActivity = (
       id: string,
@@ -332,6 +332,20 @@ describe("buildThreadFeed", () => {
           "First call complete",
         ),
         lifecycleActivity(
+          "tool-a-late-updated",
+          "2026-04-01T00:00:03.500Z",
+          "tool.updated",
+          "call-a",
+          "Late first update",
+        ),
+        lifecycleActivity(
+          "tool-a-completed-duplicate",
+          "2026-04-01T00:00:03.750Z",
+          "tool.completed",
+          "call-a",
+          "First call complete",
+        ),
+        lifecycleActivity(
           "tool-b-completed",
           "2026-04-01T00:00:04.000Z",
           "tool.completed",
@@ -345,7 +359,7 @@ describe("buildThreadFeed", () => {
     expect(group?.type).toBe("activity-group");
     if (!group || group.type !== "activity-group") return;
     expect(group.activities.map((activity) => activity.id)).toEqual([
-      "tool-a-completed",
+      "tool-a-completed-duplicate",
       "tool-b-completed",
     ]);
   });

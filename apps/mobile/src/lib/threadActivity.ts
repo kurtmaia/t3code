@@ -474,6 +474,13 @@ function collapseDerivedWorkLogEntries(
       const matchingIndex = toolLifecycleRowIndex.get(lifecycleKey);
       const matchingEntry = matchingIndex !== undefined ? collapsed[matchingIndex] : undefined;
       if (matchingIndex !== undefined && matchingEntry) {
+        if (matchingEntry.activityKind === "tool.completed") {
+          collapsed[matchingIndex] =
+            entry.activityKind === "tool.completed"
+              ? mergeDerivedWorkLogEntries(matchingEntry, entry)
+              : mergeDerivedWorkLogEntries(entry, matchingEntry);
+          continue;
+        }
         if (shouldCollapseToolLifecycleEntries(matchingEntry, entry)) {
           collapsed[matchingIndex] = mergeDerivedWorkLogEntries(matchingEntry, entry);
           continue;
