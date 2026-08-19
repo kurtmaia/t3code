@@ -1773,6 +1773,48 @@ describe("deriveWorkLogEntries", () => {
     ]);
   });
 
+  it("only settles an adjacent id-less completion when its target is unambiguous", () => {
+    const commandActivity = (
+      id: string,
+      kind: "tool.started" | "tool.updated" | "tool.completed",
+      turnId: string,
+      sequence: number,
+      toolCallId?: string,
+    ) =>
+      makeActivity({
+        id,
+        kind,
+        turnId,
+        sequence,
+        summary: kind === "tool.completed" ? "Command completed" : "Command",
+        payload: {
+          itemType: "command_execution",
+          title: "Command",
+          status: kind === "tool.completed" ? "completed" : "inProgress",
+          ...(toolCallId ? { toolCallId } : {}),
+        },
+      });
+
+    const concurrentEntries = deriveWorkLogEntries([
+      commandActivity("call-1-start", "tool.started", "turn-1", 1, "call-1"),
+      commandActivity("call-2-start", "tool.started", "turn-1", 2, "call-2"),
+      commandActivity("call-2-update", "tool.updated", "turn-1", 3, "call-2"),
+      commandActivity("id-less-complete", "tool.completed", "turn-1", 4),
+    ]);
+    expect(concurrentEntries.map((entry) => entry.id)).toEqual([
+      "call-1-start",
+      "call-2-update",
+      "id-less-complete",
+    ]);
+
+    const nextTurnEntries = deriveWorkLogEntries([
+      commandActivity("old-start", "tool.started", "turn-1", 1, "call-1"),
+      commandActivity("current-start", "tool.started", "turn-2", 2, "call-2"),
+      commandActivity("current-complete", "tool.completed", "turn-2", 3),
+    ]);
+    expect(nextTurnEntries.map((entry) => entry.id)).toEqual(["old-start", "current-complete"]);
+  });
+
   it("folds a delayed update into an already completed tool call", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

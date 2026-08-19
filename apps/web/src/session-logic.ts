@@ -1066,7 +1066,7 @@ function collapseDerivedWorkLogEntries(
     }
     const previous = collapsed.at(-1);
     const hasCompetingIdlessCompletionTarget =
-      previous?.activityKind === "tool.started" &&
+      (previous?.activityKind === "tool.started" || previous?.activityKind === "tool.updated") &&
       entry.activityKind === "tool.completed" &&
       entry.toolCallId === undefined &&
       collapsed
@@ -1074,6 +1074,7 @@ function collapseDerivedWorkLogEntries(
         .some(
           (candidate) =>
             candidate.activityKind !== "tool.completed" &&
+            candidate.turnId === previous.turnId &&
             candidate.itemType === previous.itemType &&
             normalizeCompactToolLabel(candidate.toolTitle ?? candidate.label) ===
               normalizeCompactToolLabel(previous.toolTitle ?? previous.label),
