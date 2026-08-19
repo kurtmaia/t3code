@@ -118,6 +118,7 @@ describe("OrchestrationEngine", () => {
     const projectionSnapshot = {
       snapshotSequence: 7,
       updatedAt: "2026-03-03T00:00:04.000Z",
+      tasks: [],
       projects: [
         {
           id: asProjectId("project-bootstrap"),
@@ -187,6 +188,7 @@ describe("OrchestrationEngine", () => {
               snapshotSequence: projectionSnapshot.snapshotSequence,
               projects: [],
               threads: [],
+              tasks: [],
               updatedAt: projectionSnapshot.updatedAt,
             }),
           getArchivedShellSnapshot: () =>
@@ -194,6 +196,7 @@ describe("OrchestrationEngine", () => {
               snapshotSequence: projectionSnapshot.snapshotSequence,
               projects: [],
               threads: [],
+              tasks: [],
               updatedAt: projectionSnapshot.updatedAt,
             }),
           getSnapshotSequence: () =>
@@ -204,6 +207,7 @@ describe("OrchestrationEngine", () => {
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
           getThreadCheckpointContext: () => Effect.succeed(Option.none()),
           getFullThreadDiffContext: () => Effect.succeed(Option.none()),
+          getTaskById: () => Effect.die("unexpected getTaskById"),
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
           getThreadDetailSnapshot: () => Effect.succeed(Option.none()),

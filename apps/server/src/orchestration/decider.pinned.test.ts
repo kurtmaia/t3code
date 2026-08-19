@@ -54,6 +54,7 @@ function makeReadModel(input: {
         session: null,
       },
     ],
+    tasks: [],
     updatedAt: NOW,
   };
 }

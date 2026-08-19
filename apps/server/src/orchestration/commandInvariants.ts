@@ -2,10 +2,14 @@ import type {
   OrchestrationCommand,
   OrchestrationProject,
   OrchestrationReadModel,
+  OrchestrationTask,
   OrchestrationThread,
   ProjectId,
+  TaskId,
+  TaskStatus,
   ThreadId,
 } from "@t3tools/contracts";
+import { canTransitionTask } from "@t3tools/contracts";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as Effect from "effect/Effect";
 
@@ -179,6 +183,110 @@ export function requireNonNegativeInteger(input: {
     invariantError(
       input.commandType,
       `${input.field} must be an integer greater than or equal to 0.`,
+    ),
+  );
+}
+
+export function findTaskById(
+  readModel: OrchestrationReadModel,
+  taskId: TaskId,
+): OrchestrationTask | undefined {
+  return readModel.tasks.find((task) => task.id === taskId);
+}
+
+export function listTasksByProjectId(
+  readModel: OrchestrationReadModel,
+  projectId: ProjectId,
+): ReadonlyArray<OrchestrationTask> {
+  return readModel.tasks.filter((task) => task.projectId === projectId);
+}
+
+export function requireTask(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly taskId: TaskId;
+}): Effect.Effect<OrchestrationTask, OrchestrationCommandInvariantError> {
+  const task = findTaskById(input.readModel, input.taskId);
+  if (task && task.deletedAt === null) {
+    return Effect.succeed(task);
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Task '${input.taskId}' does not exist for command '${input.command.type}'.`,
+    ),
+  );
+}
+
+export function requireTaskAbsent(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly taskId: TaskId;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  if (!findTaskById(input.readModel, input.taskId)) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Task '${input.taskId}' already exists and cannot be created twice.`,
+    ),
+  );
+}
+
+/**
+ * Refuses a status move the lifecycle does not model. A same-status set is a
+ * no-op the decider drops rather than an error, so a double-drop on the board
+ * does not surface a failure to the user.
+ */
+export function requireLegalTaskTransition(input: {
+  readonly command: OrchestrationCommand;
+  readonly taskId: TaskId;
+  readonly from: TaskStatus;
+  readonly to: TaskStatus;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  if (input.from === input.to || canTransitionTask(input.from, input.to)) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Task '${input.taskId}' cannot move from '${input.from}' to '${input.to}'.`,
+    ),
+  );
+}
+
+/**
+ * Refuses a second task claiming one external identity within a project, which
+ * is what makes importing from an external tool idempotent: re-running an
+ * import re-offers every task, and only the new ones survive this check.
+ */
+export function requireTaskSourceIdentityAbsent(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly projectId: ProjectId;
+  readonly source: string | null;
+  readonly externalId: string | null;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  if (input.source === null || input.externalId === null) {
+    return Effect.void;
+  }
+  // Deleted tasks still hold their identity. Re-importing one a human removed
+  // would undo their decision, and the projection's unique index would refuse
+  // the row anyway — so a delete is a permanent "not this one".
+  const existing = input.readModel.tasks.find(
+    (task) =>
+      task.projectId === input.projectId &&
+      task.source === input.source &&
+      task.externalId === input.externalId,
+  );
+  if (existing === undefined) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Task '${existing.id}' already imported '${input.externalId}' from '${input.source}' for project '${input.projectId}'.`,
     ),
   );
 }

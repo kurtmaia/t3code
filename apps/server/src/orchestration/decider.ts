@@ -1,4 +1,5 @@
 import {
+  DEFAULT_TASK_PRIORITY,
   EventId,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -11,10 +12,15 @@ import type * as PlatformError from "effect/PlatformError";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
+  listTasksByProjectId,
   listThreadsByProjectId,
   requireActiveProjectWorkspaceRootAbsent,
+  requireLegalTaskTransition,
   requireProject,
   requireProjectAbsent,
+  requireTask,
+  requireTaskAbsent,
+  requireTaskSourceIdentityAbsent,
   requireThread,
   requireThreadArchived,
   requireThreadAbsent,
@@ -313,7 +319,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: `Project '${command.projectId}' is not empty and cannot be deleted without force=true.`,
         });
       }
-      if (activeThreads.length > 0) {
+      // Tasks cascade but never block the delete: unlike a thread they own no
+      // running session, and a board left behind by a removed project would
+      // render as cards belonging to nothing.
+      const activeTasks = listTasksByProjectId(readModel, command.projectId).filter(
+        (task) => task.deletedAt === null,
+      );
+      if (activeThreads.length > 0 || activeTasks.length > 0) {
         return yield* decideCommandSequence({
           readModel,
           commands: [
@@ -322,6 +334,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
                 type: "thread.delete",
                 commandId: command.commandId,
                 threadId: thread.id,
+              }),
+            ),
+            ...activeTasks.map(
+              (task): Extract<OrchestrationCommand, { type: "task.delete" }> => ({
+                type: "task.delete",
+                commandId: command.commandId,
+                taskId: task.id,
               }),
             ),
             {
@@ -371,6 +390,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           projectId: command.projectId,
+          taskId: command.taskId ?? null,
           title: command.title,
           modelSelection: command.modelSelection,
           runtimeMode: command.runtimeMode,
@@ -828,6 +848,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.meta-updated",
         payload: {
           threadId: command.threadId,
+          ...(command.taskId !== undefined ? { taskId: command.taskId } : {}),
           ...(command.title !== undefined ? { title: command.title } : {}),
           ...(command.regenerateTitle === true
             ? {
@@ -1400,6 +1421,163 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         },
       };
       return [unsettledEvent, activityAppendedEvent];
+    }
+
+    case "task.create": {
+      yield* requireTaskAbsent({
+        readModel,
+        command,
+        taskId: command.taskId,
+      });
+      yield* requireProject({
+        readModel,
+        command,
+        projectId: command.projectId,
+      });
+      // Importing the same external task twice is the expected case (a project
+      // re-added, an importer re-run), not an error the caller must avoid.
+      yield* requireTaskSourceIdentityAbsent({
+        readModel,
+        command,
+        projectId: command.projectId,
+        source: command.source ?? null,
+        externalId: command.externalId ?? null,
+      });
+
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "task",
+          aggregateId: command.taskId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "task.created",
+        payload: {
+          taskId: command.taskId,
+          projectId: command.projectId,
+          title: command.title,
+          // Defaults to pending; an importer states where the task already
+          // is. Not a transition, so TASK_STATUS_TRANSITIONS does not apply.
+          status: command.status ?? "pending",
+          priority: command.priority ?? DEFAULT_TASK_PRIORITY,
+          body: command.body ?? "",
+          labels: command.labels ?? [],
+          orderKey: command.orderKey ?? null,
+          source: command.source ?? null,
+          externalId: command.externalId ?? null,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "task.meta.update": {
+      yield* requireTask({
+        readModel,
+        command,
+        taskId: command.taskId,
+      });
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "task",
+          aggregateId: command.taskId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "task.meta-updated",
+        payload: {
+          taskId: command.taskId,
+          ...(command.title !== undefined ? { title: command.title } : {}),
+          ...(command.priority !== undefined ? { priority: command.priority } : {}),
+          ...(command.body !== undefined ? { body: command.body } : {}),
+          ...(command.labels !== undefined ? { labels: command.labels } : {}),
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
+    case "task.status.set": {
+      const task = yield* requireTask({
+        readModel,
+        command,
+        taskId: command.taskId,
+      });
+      yield* requireLegalTaskTransition({
+        command,
+        taskId: command.taskId,
+        from: task.status,
+        to: command.status,
+      });
+      const occurredAt = yield* nowIso;
+      // Dropping a card back where it started is a duplicate (double-drop,
+      // raced clients), not a move: re-emit carrying the task's existing
+      // updatedAt so the projection is a no-op. The engine requires every
+      // command to produce an event, so this cannot just return nothing.
+      const unchanged = task.status === command.status;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "task",
+          aggregateId: command.taskId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "task.status-changed",
+        payload: {
+          taskId: command.taskId,
+          status: command.status,
+          previousStatus: task.status,
+          updatedAt: unchanged ? task.updatedAt : occurredAt,
+        },
+      };
+    }
+
+    case "task.reorder": {
+      const task = yield* requireTask({
+        readModel,
+        command,
+        taskId: command.taskId,
+      });
+      const occurredAt = yield* nowIso;
+      // Same rule as a redundant status set: re-emit as a projection no-op
+      // rather than returning nothing.
+      const unmoved = task.orderKey === command.orderKey;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "task",
+          aggregateId: command.taskId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "task.reordered",
+        payload: {
+          taskId: command.taskId,
+          orderKey: command.orderKey,
+          updatedAt: unmoved ? task.updatedAt : occurredAt,
+        },
+      };
+    }
+
+    case "task.delete": {
+      yield* requireTask({
+        readModel,
+        command,
+        taskId: command.taskId,
+      });
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "task",
+          aggregateId: command.taskId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "task.deleted",
+        payload: {
+          taskId: command.taskId,
+          deletedAt: occurredAt,
+        },
+      };
     }
 
     default: {

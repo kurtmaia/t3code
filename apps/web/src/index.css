@@ -1567,6 +1567,9 @@ code {
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: var(--app-scrollbar-width);
+  /* Without a height the horizontal bar falls back to the platform default,
+     which on macOS is an overlay that fades out entirely. */
+  height: var(--app-scrollbar-width);
 }
 
 ::-webkit-scrollbar-track {

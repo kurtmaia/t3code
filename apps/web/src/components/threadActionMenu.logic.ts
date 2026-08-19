@@ -15,6 +15,7 @@ export type ThreadActionMenuId =
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
+  | `assign-task:${string}`
   | "rename"
   | "regenerate-title"
   | "mark-unread"
@@ -40,6 +41,10 @@ export interface ThreadActionMenuState {
     readonly titleRegeneration: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
+  /** Tasks on this thread's project, for the assign submenu. Empty hides it:
+      a board with no tasks has nothing to assign to. */
+  readonly tasks: ReadonlyArray<{ readonly id: string; readonly title: string }>;
+  readonly currentTaskId: string | null;
 }
 
 /**
@@ -56,6 +61,25 @@ export function buildThreadActionMenuItems(
           {
             id: "new-thread-on-branch" as const,
             label: `New thread on ${state.branch}`,
+          },
+        ]
+      : []),
+    ...(state.tasks.length > 0
+      ? [
+          {
+            id: "assign-task:none" as const,
+            label: "Assign to task",
+            children: [
+              ...state.tasks.map((task) => ({
+                id: `assign-task:${task.id}` as const,
+                label: task.title,
+                disabled: state.currentTaskId === task.id,
+              })),
+              // The way out has to sit beside the way in.
+              ...(state.currentTaskId === null
+                ? []
+                : [{ id: "assign-task:none" as const, label: "Remove from task" }]),
+            ],
           },
         ]
       : []),

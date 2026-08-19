@@ -60,6 +60,7 @@ function makeReadModel(
         session,
       },
     ],
+    tasks: [],
     updatedAt: NOW,
   };
 }

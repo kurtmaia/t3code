@@ -483,8 +483,10 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
               snapshotSequence: 1,
               projects: [project],
               threads: [thread],
+              tasks: [],
               updatedAt: now,
             } satisfies OrchestrationShellSnapshot),
+          getTaskById: () => Effect.die("unexpected getTaskById"),
           getThreadShellById: () =>
             Deferred.succeed(threadShellRequested, undefined).pipe(
               Effect.ignore,
@@ -674,8 +676,10 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
                 snapshotSequence: 1,
                 projects: [project],
                 threads: [thread],
+                tasks: [],
                 updatedAt: now,
               } satisfies OrchestrationShellSnapshot),
+            getTaskById: () => Effect.die("unexpected getTaskById"),
             getThreadShellById: () => Effect.succeed(Option.some(thread)),
             getProjectShellById: () => Effect.succeed(Option.some(project)),
           } as unknown as ProjectionSnapshotQueryShape),

@@ -15,11 +15,13 @@ import type {
   OrchestrationSearchThreadsInput,
   OrchestrationSearchThreadsResult,
   OrchestrationShellSnapshot,
+  OrchestrationTask,
   OrchestrationThread,
   OrchestrationThreadDetailSnapshot,
   OrchestrationThreadDetailWindow,
   OrchestrationThreadShell,
   ProjectId,
+  TaskId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -162,6 +164,13 @@ export interface ProjectionSnapshotQueryShape {
   readonly getThreadShellById: (
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<OrchestrationThreadShell>, ProjectionRepositoryError>;
+
+  /**
+   * Read a single active task row by id, for shell-stream refetches.
+   */
+  readonly getTaskById: (
+    taskId: TaskId,
+  ) => Effect.Effect<Option.Option<OrchestrationTask>, ProjectionRepositoryError>;
 
   /**
    * Read a single active thread detail snapshot by id.

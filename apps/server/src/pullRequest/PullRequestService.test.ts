@@ -167,6 +167,7 @@ function makeService(input: {
               snapshotSequence: 1,
               projects: input.projects,
               threads: [],
+              tasks: [],
               updatedAt: "2026-07-01T00:00:00Z",
             }),
         }),

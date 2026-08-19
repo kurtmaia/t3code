@@ -2,6 +2,7 @@ import {
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
   GitPullRequestIcon,
+  SquareKanbanIcon,
   SettingsIcon,
 } from "lucide-react";
 import { memo, useCallback } from "react";
@@ -126,7 +127,9 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
         ? "usage"
         : location.pathname === "/pull-requests"
           ? "pull-requests"
-          : null,
+          : location.pathname === "/tasks"
+            ? "tasks"
+            : null,
   });
   const { environments } = useEnvironments();
   // The page reads every connected server, so one of them offering pull requests is enough for
@@ -142,6 +145,10 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   const handlePullRequestsClick = useCallback(() => {
     closeMobileSidebar();
     void navigate({ to: "/pull-requests", search: { involvement: "all", state: "open" } });
+  }, [closeMobileSidebar, navigate]);
+  const handleTasksClick = useCallback(() => {
+    closeMobileSidebar();
+    void navigate({ to: "/tasks" });
   }, [closeMobileSidebar, navigate]);
   const handleSettingsClick = useCallback(() => {
     closeMobileSidebar();
@@ -188,6 +195,18 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
                   }
                 />
                 <TooltipPopup side="top">Settings</TooltipPopup>
+              </Tooltip>
+            </SidebarMenuItem>
+            <SidebarMenuItem className="shrink-0">
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <SidebarMenuButton aria-label="Tasks" onClick={handleTasksClick} size="icon">
+                      <SquareKanbanIcon />
+                    </SidebarMenuButton>
+                  }
+                />
+                <TooltipPopup side="top">Tasks</TooltipPopup>
               </Tooltip>
             </SidebarMenuItem>
             {pullRequestsSupported ? (

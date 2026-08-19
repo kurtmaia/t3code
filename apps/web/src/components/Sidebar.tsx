@@ -30,6 +30,7 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
+import { TaskId } from "@t3tools/contracts";
 import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
@@ -105,7 +106,7 @@ import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import { useProjects, useThreadShells } from "../state/entities";
+import { readTasksForProject, useProjects, useThreadShells } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
@@ -3070,11 +3071,38 @@ export default function Sidebar() {
                 titleRegeneration: supportsTitleRegeneration,
               },
               snoozePresets,
+              tasks: readTasksForProject({
+                environmentId: threadRef.environmentId,
+                projectId: thread.projectId,
+              }).map((task: { readonly id: string; readonly title: string }) => ({
+                id: task.id,
+                title: task.title,
+              })),
+              currentTaskId: thread.taskId ?? null,
             }),
             position,
           ),
         );
         if (clicked._tag === "Failure") return;
+        if (clicked.value?.startsWith("assign-task:")) {
+          const raw = clicked.value.slice("assign-task:".length);
+          const nextTaskId = raw === "none" ? null : TaskId.make(raw);
+          if ((thread.taskId ?? null) === nextTaskId) return;
+          const assigned = await updateThreadMetadata({
+            environmentId: threadRef.environmentId,
+            input: { threadId: threadRef.threadId, taskId: nextTaskId },
+          });
+          if (assigned._tag === "Failure" && !isAtomCommandInterrupted(assigned)) {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: nextTaskId === null ? "Failed to remove from task" : "Failed to assign task",
+                description: String(squashAtomCommandFailure(assigned)),
+              }),
+            );
+          }
+          return;
+        }
         if (clicked.value?.startsWith("snooze:")) {
           const preset = snoozePresets.find(
             (candidate) => `snooze:${candidate.id}` === clicked.value,

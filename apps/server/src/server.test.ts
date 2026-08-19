@@ -203,6 +203,7 @@ const makeDefaultOrchestrationReadModel = () => {
   return {
     snapshotSequence: 0,
     updatedAt: now,
+    tasks: [],
     projects: [
       {
         id: defaultProjectId,
@@ -787,6 +788,7 @@ const buildAppUnderTest = (options?: {
               snapshotSequence: 0,
               projects: [],
               threads: [],
+              tasks: [],
               updatedAt: "1970-01-01T00:00:00.000Z",
             }),
           getArchivedShellSnapshot: () =>
@@ -794,11 +796,13 @@ const buildAppUnderTest = (options?: {
               snapshotSequence: 0,
               projects: [],
               threads: [],
+              tasks: [],
               updatedAt: "1970-01-01T00:00:00.000Z",
             }),
           searchThreads: () => Effect.succeed({ matches: [] }),
           getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
           getProjectShellById: () => Effect.succeed(Option.none()),
+          getTaskById: () => Effect.die("unexpected getTaskById"),
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
           getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
@@ -5826,6 +5830,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const snapshot = {
         snapshotSequence: 1,
         updatedAt: now,
+        tasks: [],
         projects: [
           {
             id: ProjectId.make("project-a"),
@@ -6069,6 +6074,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   snapshotSequence: 1,
                   projects: [],
                   threads: [makeDefaultOrchestrationThreadShell()],
+                  tasks: [],
                   updatedAt: "2026-01-01T00:00:00.000Z",
                 };
               }),
@@ -6327,6 +6333,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 snapshotSequence: 100_000,
                 projects: [],
                 threads: [makeDefaultOrchestrationThreadShell({ id: snapshotThreadId })],
+                tasks: [],
                 updatedAt: now,
               }),
           },
@@ -6374,6 +6381,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 snapshotSequence: 5,
                 projects: [],
                 threads: [],
+                tasks: [],
                 updatedAt: "2026-01-01T00:00:00.000Z",
               }),
           },
@@ -6446,6 +6454,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             },
           },
           projectionSnapshotQuery: {
+            getTaskById: () => Effect.die("unexpected getTaskById"),
             getThreadShellById: (threadId) =>
               Effect.sync(() => {
                 shellFetches.push(threadId);
@@ -6524,6 +6533,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             streamDomainEvents: Stream.fromPubSub(liveEvents),
           },
           projectionSnapshotQuery: {
+            getTaskById: () => Effect.die("unexpected getTaskById"),
             getThreadShellById: (threadId) =>
               Effect.sync(() => {
                 shellFetches.push(threadId);
@@ -6618,6 +6628,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               ]),
           },
           projectionSnapshotQuery: {
+            getTaskById: () => Effect.die("unexpected getTaskById"),
             getThreadShellById: () => Effect.succeed(Option.none()),
           },
         },
@@ -6666,6 +6677,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             readEvents: () => Stream.make(event),
           },
           projectionSnapshotQuery: {
+            getTaskById: () => Effect.die("unexpected getTaskById"),
             getThreadShellById: () =>
               Effect.suspend(() => {
                 attempts += 1;
@@ -6783,6 +6795,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               }),
           },
           projectionSnapshotQuery: {
+            getTaskById: () => Effect.die("unexpected getTaskById"),
             getThreadShellById: () =>
               Effect.succeed(
                 Option.some(
@@ -6858,6 +6871,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               }),
           },
           projectionSnapshotQuery: {
+            getTaskById: () => Effect.die("unexpected getTaskById"),
             getThreadShellById: () =>
               Effect.sync(() => {
                 effects.push(`query:thread-shell:${archived ? "archived" : "active"}`);
@@ -6931,6 +6945,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               }),
           },
           projectionSnapshotQuery: {
+            getTaskById: () => Effect.die("unexpected getTaskById"),
             getThreadShellById: () =>
               Effect.succeed(
                 Option.some(makeDefaultOrchestrationThreadShell({ id: threadId, session: null })),
@@ -6985,6 +7000,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 }),
             },
             projectionSnapshotQuery: {
+              getTaskById: () => Effect.die("unexpected getTaskById"),
               getThreadShellById: () =>
                 Effect.succeed(
                   Option.some(
@@ -7051,6 +7067,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               }),
           },
           projectionSnapshotQuery: {
+            getTaskById: () => Effect.die("unexpected getTaskById"),
             getThreadShellById: () =>
               Effect.succeed(
                 Option.some(
@@ -7119,6 +7136,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               }),
           },
           projectionSnapshotQuery: {
+            getTaskById: () => Effect.die("unexpected getTaskById"),
             getThreadShellById: () =>
               Effect.succeed(
                 Option.some(makeDefaultOrchestrationThreadShell({ id: threadId, session: null })),
@@ -7178,6 +7196,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             },
           },
           projectionSnapshotQuery: {
+            getTaskById: () => Effect.die("unexpected getTaskById"),
             getThreadShellById: () =>
               Effect.succeed(
                 Option.some(
@@ -7250,6 +7269,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             },
           },
           projectionSnapshotQuery: {
+            getTaskById: () => Effect.die("unexpected getTaskById"),
             getThreadShellById: () =>
               Effect.succeed(
                 Option.some(
