@@ -34,7 +34,6 @@ import { FileDiff } from "@pierre/diffs/react";
 import {
   deriveTimelineEntries,
   workEntryDisplayIndicatesToolFailure,
-  workEntryIndicatesToolNeutralStatus,
   workLogEntryIsToolLike,
 } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
@@ -83,6 +82,7 @@ import {
   resolveTimelineMinimapInteractiveWidth,
   resolveTimelineMinimapTopPercent,
   shouldPreserveAssistantLineBreaks,
+  workEntryIsVisibleInGroup,
   workLogEntryIsLocalCodeSearch,
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
@@ -1360,11 +1360,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
   const { workspaceRoot } = use(TimelineRowCtx);
   const nonEmptyEntries = useMemo(
     () =>
-      groupedEntries.filter(
-        (entry) =>
-          (isExpandedToolGroupEntry && entry.toolLifecycleStatus === "inProgress") ||
-          !workEntryIndicatesToolNeutralStatus(entry),
-      ),
+      groupedEntries.filter((entry) => workEntryIsVisibleInGroup(entry, isExpandedToolGroupEntry)),
     [groupedEntries, isExpandedToolGroupEntry],
   );
   const onlyToolEntries = nonEmptyEntries.every((entry) => workLogEntryIsToolLike(entry));

@@ -18,6 +18,18 @@ export const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "calc(100vh - 18rem)";
 export const TIMELINE_CONTENT_MAX_WIDTH = 768;
 export const TIMELINE_MINIMAP_PERSISTENT_GUTTER = 48;
 
+export function workEntryIsVisibleInGroup(
+  entry: WorkLogEntry,
+  expandedToolGroupEntry = false,
+): boolean {
+  return (
+    (expandedToolGroupEntry &&
+      (entry.toolLifecycleStatus === "inProgress" ||
+        entry.sourceActivityKind === "task.progress")) ||
+    !workEntryIndicatesToolNeutralStatus(entry)
+  );
+}
+
 export interface TimelineEndState {
   readonly isAtEnd?: boolean;
   readonly contentLength?: number;
@@ -725,10 +737,7 @@ export function deriveMessagesTimelineRows(input: {
     index >= activeTurnHeaderIndex &&
     (unsettledTurnId === null || timelineEntryTurnId(entry) === unsettledTurnId);
   const isVisibleActiveToolEntry = (entry: WorkLogEntry) =>
-    workLogEntryIsToolLike(entry) &&
-    (entry.sourceActivityKind === "task.progress" ||
-      entry.toolLifecycleStatus === "inProgress" ||
-      !workEntryIndicatesToolNeutralStatus(entry));
+    workLogEntryIsToolLike(entry) && workEntryIsVisibleInGroup(entry, true);
   const activeEntries = input.isWorking
     ? input.timelineEntries.filter((entry, index) => entryBelongsToActiveTurn(entry, index))
     : [];
@@ -851,7 +860,7 @@ export function deriveMessagesTimelineRows(input: {
         cursor += 1;
       }
       const visibleGroupedEntries = omitSupersededLifecycleMarkers(
-        groupedEntries.filter((entry) => !workEntryIndicatesToolNeutralStatus(entry)),
+        groupedEntries.filter((entry) => workEntryIsVisibleInGroup(entry)),
         (entry) => entry,
       );
       if (visibleGroupedEntries.length > 0) {

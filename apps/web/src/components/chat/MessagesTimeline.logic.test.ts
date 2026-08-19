@@ -1575,7 +1575,7 @@ describe("deriveMessagesTimelineRows", () => {
   });
 
   it("keeps task progress in the single live activity line", () => {
-    const rows = deriveMessagesTimelineRows({
+    const input = {
       timelineEntries: [
         {
           id: "task-progress-entry",
@@ -1602,7 +1602,8 @@ describe("deriveMessagesTimelineRows", () => {
       activeTurnStartedAt: "2026-01-01T00:00:00Z",
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
-    });
+    } satisfies Parameters<typeof deriveMessagesTimelineRows>[0];
+    const rows = deriveMessagesTimelineRows(input);
 
     expect(rows.map((row) => row.id)).toEqual([
       "working-indicator-row",
@@ -1612,6 +1613,16 @@ describe("deriveMessagesTimelineRows", () => {
       entry: { id: "task-progress" },
     });
     expect(rows.find((row) => row.kind === "working")).toMatchObject({ showThinking: false });
+
+    const expandedRows = deriveMessagesTimelineRows({
+      ...input,
+      expandedWorkGroupIds: new Set(["work-group:task-progress-entry"]),
+    });
+    expect(expandedRows.map((row) => row.id)).toEqual([
+      "working-indicator-row",
+      "work-live:task-progress-entry",
+      "task-progress",
+    ]);
   });
 
   it("keeps the current tool batch live before an empty assistant placeholder", () => {
