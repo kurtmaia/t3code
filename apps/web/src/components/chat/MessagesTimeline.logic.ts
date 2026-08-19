@@ -284,7 +284,7 @@ export function workLogEntryIsLocalCodeSearch(entry: WorkLogEntry): boolean {
   );
 }
 
-function toolGroupAction(entry: WorkLogEntry): ToolGroupAction {
+export function toolGroupAction(entry: WorkLogEntry): ToolGroupAction {
   if (
     entry.requestKind === "file-read" ||
     entry.itemType === "image_view" ||

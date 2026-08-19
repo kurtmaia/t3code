@@ -82,8 +82,8 @@ import {
   resolveTimelineMinimapInteractiveWidth,
   resolveTimelineMinimapTopPercent,
   shouldPreserveAssistantLineBreaks,
+  toolGroupAction,
   workEntryIsVisibleInGroup,
-  workLogEntryIsLocalCodeSearch,
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
   TIMELINE_MINIMAP_MIN_ITEMS,
@@ -2439,21 +2439,8 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
   ) {
     return "message-circle";
   }
-  if (workEntry.requestKind === "command") return "terminal";
-  if (workEntry.requestKind === "file-read") return "eye";
-  if (workEntry.requestKind === "file-change") return "square-pen";
-
-  if (workEntry.itemType === "command_execution" || workEntry.command) {
-    return "terminal";
-  }
-  if (workEntry.itemType === "file_change" || (workEntry.changedFiles?.length ?? 0) > 0) {
-    return "square-pen";
-  }
-  if (workLogEntryIsLocalCodeSearch(workEntry)) return "search";
-  if (workEntry.itemType === "web_search") return "globe";
-  if (workEntry.itemType === "image_view") return "eye";
-  if (workEntry.itemType === "dynamic_tool_call" && workEntry.toolTitle === "Read File")
-    return "eye";
+  const action = toolGroupAction(workEntry);
+  if (action !== "other") return toolGroupSummaryIconName(action);
 
   switch (workEntry.itemType) {
     case "mcp_tool_call":

@@ -964,6 +964,7 @@ describe("MessagesTimeline", () => {
               toolCallId: "call-live-read-file",
               label: "Read File",
               toolTitle: "Read File",
+              command: "cat README.md",
               tone: "tool",
               itemType: "dynamic_tool_call",
               toolLifecycleStatus: "inProgress",
@@ -1132,6 +1133,8 @@ describe("MessagesTimeline", () => {
               createdAt: "2026-03-17T19:12:28.000Z",
               label: "Updated files",
               tone: "tool",
+              itemType: "command_execution",
+              command: "apply_patch",
               changedFiles: ["C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts"],
             },
           },
@@ -1141,6 +1144,8 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Changed 1 file");
+    expect(markup).toContain("lucide-square-pen");
+    expect(markup).not.toContain("lucide-terminal");
     expect(markup).not.toContain("C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts");
   });
 
