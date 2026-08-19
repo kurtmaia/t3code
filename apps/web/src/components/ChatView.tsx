@@ -4507,7 +4507,6 @@ function ChatViewContent(props: ChatViewProps) {
           {isStoppingBackgroundWork ? "Stopping..." : "Stop"}
         </Button>
       ),
-      className: "px-3 pt-1.5 text-xs",
     };
   }, [
     activeBackgroundLiveness,
