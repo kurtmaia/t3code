@@ -1839,9 +1839,22 @@ describe("deriveMessagesTimelineRows", () => {
     });
   });
 
-  it("uses settled lifecycle entries throughout a tool summary", () => {
+  it("filters only matching settled lifecycle markers", () => {
     const input = {
       timelineEntries: [
+        {
+          id: "unrelated-update-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:00Z",
+          entry: {
+            id: "unrelated-update",
+            createdAt: "2026-01-01T00:00:00Z",
+            label: "Read file",
+            tone: "tool",
+            itemType: "dynamic_tool_call",
+            sourceActivityKind: "tool.updated",
+          },
+        },
         {
           id: "legacy-update-entry",
           kind: "work",
@@ -1851,7 +1864,7 @@ describe("deriveMessagesTimelineRows", () => {
             createdAt: "2026-01-01T00:00:01Z",
             label: "Glob",
             tone: "tool",
-            itemType: "dynamic_tool_call",
+            itemType: "mcp_tool_call",
             sourceActivityKind: "tool.updated",
           },
         },
@@ -1879,19 +1892,18 @@ describe("deriveMessagesTimelineRows", () => {
     const collapsedRows = deriveMessagesTimelineRows(input);
     const expandedRows = deriveMessagesTimelineRows({
       ...input,
-      expandedWorkGroupIds: new Set(["work-group:legacy-update-entry"]),
+      expandedWorkGroupIds: new Set(["work-group:unrelated-update-entry"]),
     });
 
     expect(collapsedRows).toHaveLength(1);
     expect(collapsedRows[0]).toMatchObject({
       kind: "work-toggle",
-      hiddenCount: 1,
-      summary: "Used 1 tool",
-      summaryKind: "other",
+      hiddenCount: 2,
       hasFailure: false,
     });
     expect(expandedRows.map((row) => row.id)).toEqual([
-      "work-toggle:legacy-update-entry",
+      "work-toggle:unrelated-update-entry",
+      "unrelated-update",
       "legacy-complete",
     ]);
   });

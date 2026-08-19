@@ -332,7 +332,7 @@ function toolGroupActionLabel(action: ToolGroupAction, count: number): string {
 
 /** Immediate, provider-neutral fallback while generated tool summaries are disabled or unavailable. */
 export function summarizeToolGroup(entries: ReadonlyArray<WorkLogEntry>): string {
-  const summaryEntries = toolGroupSummaryEntries(entries);
+  const summaryEntries = omitSupersededLifecycleMarkers(entries, (entry) => entry);
   const groupedEntries = new Map<ToolGroupAction, WorkLogEntry[]>();
   for (const entry of summaryEntries) {
     const action = toolGroupAction(entry);
@@ -351,27 +351,16 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogEntry>): string
   return `${sentenceLabels.slice(0, -1).join(", ")}, and ${sentenceLabels.at(-1)}`;
 }
 
-function toolGroupSummaryEntries(
-  entries: ReadonlyArray<WorkLogEntry>,
-): ReadonlyArray<WorkLogEntry> {
-  const terminalEntries = entries.filter(
-    (entry) =>
-      (entry.sourceActivityKind !== "tool.started" &&
-        entry.sourceActivityKind !== "tool.updated") ||
-      (entry.toolLifecycleStatus !== undefined && entry.toolLifecycleStatus !== "inProgress"),
-  );
-  return terminalEntries.length > 0 ? terminalEntries : entries;
-}
-
-function omitSupersededLiveLifecycleMarkers<T extends { entry: WorkLogEntry }>(
+function omitSupersededLifecycleMarkers<T>(
   entries: readonly T[],
+  workEntryFor: (entry: T) => WorkLogEntry,
 ): T[] {
   const laterTerminalIdentities = new Set<string>();
   const reversedEntries: T[] = [];
 
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index]!;
-    const workEntry = entry.entry;
+    const workEntry = workEntryFor(entry);
     const normalizedLabel = normalizeCompactToolLabel(workEntry.toolTitle ?? workEntry.label);
     const identity = [
       workEntry.turnId ?? "no-turn",
@@ -399,15 +388,14 @@ function omitSupersededLiveLifecycleMarkers<T extends { entry: WorkLogEntry }>(
 }
 
 function toolGroupSummaryKind(entries: ReadonlyArray<WorkLogEntry>): ToolGroupSummaryKind {
-  const summaryEntries = toolGroupSummaryEntries(entries);
-  const actions = new Set(summaryEntries.map(toolGroupAction));
+  const actions = new Set(entries.map(toolGroupAction));
   if (actions.size !== 1) return "mixed";
 
   const action = actions.values().next().value!;
   if (action !== "other") return action;
 
   const fallbackKinds = new Set(
-    summaryEntries.map((entry): ToolGroupSummaryKind => {
+    entries.map((entry): ToolGroupSummaryKind => {
       if (entry.itemType === "mcp_tool_call") return "other";
       if (entry.itemType === "dynamic_tool_call") return "dynamic-tool";
       if (entry.itemType === "collab_agent_tool_call" || entry.taskId) return "agent-tool";
@@ -766,8 +754,9 @@ export function deriveMessagesTimelineRows(input: {
       : [],
   );
   const activeWorkEntryIds = new Set(activeToolEntries.map((entry) => entry.id));
-  const visibleActiveToolEntries = omitSupersededLiveLifecycleMarkers(
+  const visibleActiveToolEntries = omitSupersededLifecycleMarkers(
     activeToolEntries.filter((entry) => isVisibleActiveToolEntry(entry.entry)),
+    (entry) => entry.entry,
   );
   const activeWorkAnchor = activeToolEntries[0];
   const latestActiveToolEntry = visibleActiveToolEntries.at(-1);
@@ -859,11 +848,10 @@ export function deriveMessagesTimelineRows(input: {
         groupedEntries.push(nextEntry.entry);
         cursor += 1;
       }
-      const visibleGroupedEntries = [
-        ...toolGroupSummaryEntries(
-          groupedEntries.filter((entry) => !workEntryIndicatesToolNeutralStatus(entry)),
-        ),
-      ];
+      const visibleGroupedEntries = omitSupersededLifecycleMarkers(
+        groupedEntries.filter((entry) => !workEntryIndicatesToolNeutralStatus(entry)),
+        (entry) => entry,
+      );
       if (visibleGroupedEntries.length > 0) {
         const onlyToolEntries = visibleGroupedEntries.every(
           (entry) =>
