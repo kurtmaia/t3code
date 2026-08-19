@@ -488,7 +488,25 @@ function collapseDerivedWorkLogEntries(
       }
     }
     const previous = collapsed.at(-1);
-    if (previous && shouldCollapseToolLifecycleEntries(previous, entry)) {
+    const hasCompetingIdlessCompletionTarget =
+      previous?.activityKind === "tool.updated" &&
+      entry.activityKind === "tool.completed" &&
+      entry.toolCallId === undefined &&
+      collapsed
+        .slice(0, -1)
+        .some(
+          (candidate) =>
+            candidate.activityKind !== "tool.completed" &&
+            candidate.turnId === previous.turnId &&
+            candidate.itemType === previous.itemType &&
+            normalizeCompactToolLabel(candidate.toolTitle ?? candidate.label) ===
+              normalizeCompactToolLabel(previous.toolTitle ?? previous.label),
+        );
+    if (
+      previous &&
+      !hasCompetingIdlessCompletionTarget &&
+      shouldCollapseToolLifecycleEntries(previous, entry)
+    ) {
       const previousIndex = collapsed.length - 1;
       if (previous.toolCallId && previous.collapseKey) {
         toolLifecycleRowIndex.delete(previous.collapseKey);
@@ -521,7 +539,19 @@ function shouldCollapseToolLifecycleEntries(
   if (previous.activityKind === "tool.completed") {
     return false;
   }
-  return previous.collapseKey !== undefined && previous.collapseKey === next.collapseKey;
+  if (previous.collapseKey !== undefined && previous.collapseKey === next.collapseKey) {
+    return true;
+  }
+  return (
+    previous.activityKind === "tool.updated" &&
+    next.activityKind === "tool.completed" &&
+    previous.toolCallId !== undefined &&
+    next.toolCallId === undefined &&
+    previous.turnId === next.turnId &&
+    previous.itemType === next.itemType &&
+    normalizeCompactToolLabel(previous.toolTitle ?? previous.label) ===
+      normalizeCompactToolLabel(next.toolTitle ?? next.label)
+  );
 }
 
 function workLogEntryHasTerminalToolLifecycle(entry: DerivedWorkLogEntry): boolean {
@@ -545,7 +575,10 @@ function mergeDerivedWorkLogEntries(
   const toolTitle = next.toolTitle ?? previous.toolTitle;
   const itemType = next.itemType ?? previous.itemType;
   const requestKind = next.requestKind ?? previous.requestKind;
-  const collapseKey = next.collapseKey ?? previous.collapseKey;
+  const collapseKey =
+    previous.toolCallId !== undefined && next.toolCallId === undefined
+      ? previous.collapseKey
+      : (next.collapseKey ?? previous.collapseKey);
   const toolCallId = next.toolCallId ?? previous.toolCallId;
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
   const toolData = next.toolData ?? previous.toolData;
