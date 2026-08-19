@@ -799,6 +799,7 @@ export function deriveMessagesTimelineRows(input: {
   );
   const activeWorkAnchor = activeToolEntries[0];
   const latestActiveToolEntry = visibleActiveToolEntries.at(-1);
+  const activeWorkPlacementEntryId = latestActiveToolEntry?.id;
   const activeWorkRow =
     activeWorkAnchor && latestActiveToolEntry
       ? (() => {
@@ -846,6 +847,10 @@ export function deriveMessagesTimelineRows(input: {
 
     if (input.isWorking && index === activeTurnHeaderIndex) {
       appendWorkingRow();
+    }
+
+    if (timelineEntry.id === activeWorkPlacementEntryId) {
+      appendActiveWorkRows();
     }
 
     const anchoredTurnFolds = foldsByAnchorEntryId.get(timelineEntry.id);
@@ -1048,7 +1053,6 @@ export function deriveMessagesTimelineRows(input: {
   if (input.isWorking && activeTurnHeaderIndex === input.timelineEntries.length) {
     appendWorkingRow();
   }
-  if (input.isWorking) appendActiveWorkRows();
 
   return nextRows;
 }

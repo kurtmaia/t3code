@@ -2694,15 +2694,20 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
               <span className={cn("min-w-0 flex-1 truncate", headingClass)}>{displayText}</span>
             </p>
           </div>
-          {canExpand ? (
+          <span
+            className={cn(
+              "flex size-4 shrink-0 items-center justify-center",
+              !canExpand && "invisible",
+            )}
+            aria-hidden
+          >
             <ChevronDownIcon
               className={cn(
                 "size-3 shrink-0 text-icon-muted opacity-70 transition-transform duration-200",
                 expanded && "rotate-180",
               )}
-              aria-hidden
             />
-          ) : null}
+          </span>
         </div>
       </div>
       {expanded && canExpand && expandedBody ? (

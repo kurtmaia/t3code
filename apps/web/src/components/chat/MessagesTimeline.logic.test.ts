@@ -1216,7 +1216,22 @@ describe("deriveMessagesTimelineRows", () => {
     const rowsWithLaterPlan = deriveMessagesTimelineRows({
       ...baseInput,
       timelineEntries: [
-        ...timelineEntries,
+        timelineEntries[0]!,
+        {
+          id: "commentary-entry",
+          kind: "message" as const,
+          createdAt: "2026-01-01T00:00:01.500Z",
+          message: {
+            id: "commentary-message" as never,
+            role: "assistant" as const,
+            text: "I found the relevant file.",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:01.500Z",
+            updatedAt: "2026-01-01T00:00:01.500Z",
+            streaming: false,
+          },
+        },
+        timelineEntries[1]!,
         {
           id: "plan:thread-1:turn:turn-1",
           kind: "proposed-plan" as const,
@@ -1233,9 +1248,13 @@ describe("deriveMessagesTimelineRows", () => {
         },
       ],
     });
-    expect(rowsWithLaterPlan.some((row) => row.kind === "work-live")).toBe(true);
+    expect(rowsWithLaterPlan.map((row) => row.id)).toEqual([
+      "working-indicator-row",
+      "commentary-entry",
+      "work-live:tool:turn-1:call-1",
+      "plan:thread-1:turn:turn-1",
+    ]);
     expect(rowsWithLaterPlan.some((row) => row.kind === "work-toggle")).toBe(false);
-    expect(rowsWithLaterPlan.some((row) => row.kind === "proposed-plan")).toBe(true);
   });
 
   it("omits superseded id-less lifecycle markers from a live batch", () => {
