@@ -1304,7 +1304,7 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
-  it("keeps explicit in-progress calls when a matching live call completes", () => {
+  it("keeps parallel id-less markers when one matching live call completes", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
         {
@@ -1329,12 +1329,10 @@ describe("deriveMessagesTimelineRows", () => {
             id: "parallel-running",
             createdAt: "2026-01-01T00:00:02Z",
             turnId: "turn-1" as never,
-            toolCallId: "parallel-call",
             label: "Glob",
             tone: "tool" as const,
             itemType: "mcp_tool_call",
             sourceActivityKind: "tool.updated" as const,
-            toolLifecycleStatus: "inProgress" as const,
           },
         },
         {
@@ -1367,7 +1365,11 @@ describe("deriveMessagesTimelineRows", () => {
 
     expect(rows.find((row) => row.kind === "work-live")).toMatchObject({
       entry: { id: "legacy-complete" },
-      groupedEntries: [{ id: "parallel-running" }, { id: "legacy-complete" }],
+      groupedEntries: [
+        { id: "legacy-update" },
+        { id: "parallel-running" },
+        { id: "legacy-complete" },
+      ],
     });
   });
 

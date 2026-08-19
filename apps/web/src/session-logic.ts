@@ -1086,7 +1086,11 @@ function collapseDerivedWorkLogEntries(
       const previousIndex = collapsed.length - 1;
       const previousKey = toolLifecycleCollapseMapKey(previous);
       if (previousKey !== undefined) toolLifecycleRowIndex.delete(previousKey);
-      const merged = mergeDerivedWorkLogEntries(previous, entry);
+      const merged =
+        workLogEntryHasTerminalToolLifecycle(previous) &&
+        !workLogEntryHasTerminalToolLifecycle(entry)
+          ? mergeDerivedWorkLogEntries(entry, previous)
+          : mergeDerivedWorkLogEntries(previous, entry);
       collapsed[previousIndex] = merged;
       const mergedKey = toolLifecycleCollapseMapKey(merged);
       if (mergedKey !== undefined) {

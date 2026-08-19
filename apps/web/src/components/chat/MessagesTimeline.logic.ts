@@ -367,6 +367,27 @@ function omitSupersededLifecycleMarkers<T>(
   entries: readonly T[],
   workEntryFor: (entry: T) => WorkLogEntry,
 ): T[] {
+  const statuslessIdlessMarkerCounts = new Map<string, number>();
+  for (const entry of entries) {
+    const workEntry = workEntryFor(entry);
+    if (
+      workEntry.toolCallId === undefined &&
+      workEntry.toolLifecycleStatus === undefined &&
+      (workEntry.sourceActivityKind === "tool.started" ||
+        workEntry.sourceActivityKind === "tool.updated")
+    ) {
+      const identity = [
+        workEntry.turnId ?? "no-turn",
+        workEntry.itemType ?? "",
+        normalizeCompactToolLabel(workEntry.toolTitle ?? workEntry.label),
+      ].join("\u001f");
+      statuslessIdlessMarkerCounts.set(
+        identity,
+        (statuslessIdlessMarkerCounts.get(identity) ?? 0) + 1,
+      );
+    }
+  }
+
   const laterTerminalIdentities = new Set<string>();
   const reversedEntries: T[] = [];
 
@@ -384,13 +405,20 @@ function omitSupersededLifecycleMarkers<T>(
       workEntry.toolLifecycleStatus === undefined &&
       (workEntry.sourceActivityKind === "tool.started" ||
         workEntry.sourceActivityKind === "tool.updated");
-    if (isStatuslessIdlessMarker && laterTerminalIdentities.has(identity)) continue;
+    if (
+      isStatuslessIdlessMarker &&
+      statuslessIdlessMarkerCounts.get(identity) === 1 &&
+      laterTerminalIdentities.has(identity)
+    ) {
+      continue;
+    }
 
     reversedEntries.push(entry);
     if (
-      workEntry.sourceActivityKind === "tool.completed" ||
-      (workEntry.toolLifecycleStatus !== undefined &&
-        workEntry.toolLifecycleStatus !== "inProgress")
+      workEntry.toolCallId === undefined &&
+      (workEntry.sourceActivityKind === "tool.completed" ||
+        (workEntry.toolLifecycleStatus !== undefined &&
+          workEntry.toolLifecycleStatus !== "inProgress"))
     ) {
       laterTerminalIdentities.add(identity);
     }

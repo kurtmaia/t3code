@@ -1876,8 +1876,21 @@ describe("deriveWorkLogEntries", () => {
         turnId: "turn-1",
         payload: {
           itemType: "command_execution",
+          title: "Command",
           status: "failed",
           data: { toolCallId: "tool-a" },
+        },
+      }),
+      makeActivity({
+        id: "tool-a-idless-late-update",
+        createdAt: "2026-02-23T00:00:01.500Z",
+        kind: "tool.updated",
+        summary: "Running command",
+        turnId: "turn-1",
+        payload: {
+          itemType: "command_execution",
+          title: "Command",
+          status: "inProgress",
         },
       }),
       makeActivity({
