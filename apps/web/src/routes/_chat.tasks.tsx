@@ -27,6 +27,7 @@ import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Textarea } from "~/components/ui/textarea";
+import { useIsMobile } from "~/hooks/useMediaQuery";
 import { newTaskId } from "~/lib/utils";
 import { useProjects, useTasks, useThreadShells } from "~/state/entities";
 import { taskEnvironment } from "~/state/taskCommands";
@@ -164,6 +165,7 @@ function Column({
   selectedTaskId,
   onSelect,
   onDelete,
+  compact = false,
 }: {
   readonly status: TaskStatus;
   readonly tasks: ReadonlyArray<EnvironmentTask>;
@@ -173,6 +175,7 @@ function Column({
   readonly selectedTaskId: string | null;
   readonly onSelect: (task: EnvironmentTask) => void;
   readonly onDelete: (task: EnvironmentTask) => void;
+  readonly compact?: boolean;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status });
   // While a card is in flight, a column it cannot legally receive is dimmed
@@ -182,7 +185,7 @@ function Column({
   return (
     <div
       ref={setNodeRef}
-      className={`flex w-64 shrink-0 flex-col rounded-lg border border-border bg-muted/40 ${
+      className={`flex ${compact ? "w-full" : "w-64 shrink-0"} flex-col rounded-lg border border-border bg-muted/40 ${
         isOver && !illegalTarget ? "border-primary" : ""
       } ${illegalTarget ? "opacity-40" : ""}`}
     >
@@ -216,6 +219,8 @@ function TaskDetail({
   onDetach,
   onOpenThread,
   onEdit,
+  onMove,
+  compact = false,
 }: {
   readonly task: EnvironmentTask;
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
@@ -228,6 +233,8 @@ function TaskDetail({
     task: EnvironmentTask,
     changes: { readonly title?: string; readonly body?: string; readonly priority?: TaskPriority },
   ) => void;
+  readonly onMove: (task: EnvironmentTask, status: TaskStatus) => void;
+  readonly compact?: boolean;
 }) {
   const [attaching, setAttaching] = useState(false);
   // Seeded once per task: the panel is keyed by task id, so selecting another
@@ -251,7 +258,13 @@ function TaskDetail({
   };
 
   return (
-    <aside className="flex w-80 shrink-0 flex-col overflow-y-auto border-l border-border p-4">
+    <aside
+      className={
+        compact
+          ? "absolute inset-0 z-20 flex flex-col overflow-y-auto bg-background p-4"
+          : "flex w-80 shrink-0 flex-col overflow-y-auto border-l border-border p-4"
+      }
+    >
       <div className="flex items-start gap-2">
         <Input
           aria-label="Task title"
@@ -267,6 +280,15 @@ function TaskDetail({
         <Button aria-label="Close task details" onClick={onClose} size="icon" variant="ghost">
           <XIcon />
         </Button>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-1">
+        <span className="mr-1 text-xs text-muted-foreground">Move to</span>
+        {(TASK_STATUS_TRANSITIONS[task.status] as ReadonlyArray<TaskStatus>).map((next) => (
+          <Button key={next} onClick={() => onMove(task, next)} size="sm" variant="outline">
+            {COLUMN_LABELS[next]}
+          </Button>
+        ))}
       </div>
 
       <div className="mt-2 flex items-center gap-1">
@@ -376,6 +398,10 @@ function TasksPage() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [visibleColumns, setVisibleColumns] =
     useState<ReadonlyArray<TaskStatus>>(readStoredColumns);
+  const isMobile = useIsMobile();
+  // A phone shows one column at a time; seven side by side is unreadable and
+  // horizontal scrolling fights the page's own scroll.
+  const [mobileStatus, setMobileStatus] = useState<TaskStatus>("pending");
 
   useEffect(() => {
     try {
@@ -507,6 +533,17 @@ function TasksPage() {
     [updateTask],
   );
 
+  const handleMove = useCallback(
+    (task: EnvironmentTask, status: TaskStatus) => {
+      if (task.status === status || !canTransitionTask(task.status, status)) return;
+      void setTaskStatus({
+        environmentId: task.environmentId,
+        input: { taskId: TaskId.make(task.id), status },
+      });
+    },
+    [setTaskStatus],
+  );
+
   const setThreadTask = useCallback(
     (thread: EnvironmentThreadShell, taskId: TaskId | null) => {
       void updateThread({
@@ -538,21 +575,21 @@ function TasksPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 sm:px-4 sm:py-3">
         <h1 className="text-sm font-medium">Tasks</h1>
 
-        <div className="relative">
+        <div className="relative min-w-0 flex-1 sm:flex-none">
           <SearchIcon className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             aria-label="Search tasks"
-            className="w-56 pl-7"
+            className="w-full pl-7 sm:w-56"
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search title, body, labels"
             value={query}
           />
         </div>
 
-        <div className="flex flex-wrap items-center gap-1">
+        <div className="hidden flex-wrap items-center gap-1 sm:flex">
           {COLUMNS.map((status) => (
             <Button
               aria-pressed={visibleColumns.includes(status)}
@@ -566,10 +603,10 @@ function TasksPage() {
           ))}
         </div>
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="flex w-full items-center gap-2 sm:ml-auto sm:w-auto">
           <Input
             aria-label="New task title"
-            className="w-56"
+            className="min-w-0 flex-1 sm:w-56 sm:flex-none"
             disabled={target === null}
             onChange={(event) => setTitle(event.target.value)}
             onKeyDown={(event) => {
@@ -597,31 +634,71 @@ function TasksPage() {
         <p className="p-4 text-sm text-muted-foreground">No tasks match “{query.trim()}”.</p>
       ) : null}
 
-      <div className="flex min-h-0 flex-1">
-        <DndContext
-          collisionDetection={collisionDetection}
-          onDragEnd={handleDragEnd}
-          onDragStart={handleDragStart}
-          sensors={sensors}
-        >
-          {/* overflow-x-scroll, not auto: a board that is one column too wide
-              should say so rather than hide the fact until you scroll. */}
-          <div className="flex min-h-0 flex-1 gap-3 overflow-x-scroll p-4">
-            {COLUMNS.filter((status) => visibleColumns.includes(status)).map((status) => (
+      <div className="relative flex min-h-0 flex-1">
+        {isMobile ? (
+          <div className="flex min-h-0 flex-1 flex-col">
+            {/* Status picker instead of seven columns. Counts stay visible so the
+              board still reads as a board rather than a filtered list. */}
+            <div className="flex gap-1 overflow-x-auto border-b border-border px-3 py-2">
+              {COLUMNS.map((status) => (
+                <Button
+                  aria-pressed={mobileStatus === status}
+                  className="shrink-0"
+                  key={status}
+                  onClick={() => setMobileStatus(status)}
+                  size="sm"
+                  variant={mobileStatus === status ? "default" : "ghost"}
+                >
+                  {COLUMN_LABELS[status]}
+                  <span className="ml-1 text-muted-foreground">
+                    {(byStatus.get(status) ?? []).length}
+                  </span>
+                </Button>
+              ))}
+            </div>
+            {/* No DndContext on touch: a drag sensor competes with the scroll
+              gesture, and the detail panel's Move buttons are both reliable and
+              self-documenting about which moves are legal. */}
+            <div className="min-h-0 flex-1 overflow-y-auto p-3">
               <Column
-                draggedStatus={draggedStatus}
-                key={status}
+                compact
+                draggedStatus={null}
                 onDelete={handleDelete}
                 onSelect={(task) => setSelectedTaskId(task.id)}
                 projectTitles={projectTitles}
                 selectedTaskId={selectedTaskId}
-                status={status}
-                tasks={byStatus.get(status) ?? []}
+                status={mobileStatus}
+                tasks={byStatus.get(mobileStatus) ?? []}
                 threadCounts={threadCounts}
               />
-            ))}
+            </div>
           </div>
-        </DndContext>
+        ) : (
+          <DndContext
+            collisionDetection={collisionDetection}
+            onDragEnd={handleDragEnd}
+            onDragStart={handleDragStart}
+            sensors={sensors}
+          >
+            {/* overflow-x-scroll, not auto: a board that is one column too wide
+                should say so rather than hide the fact until you scroll. */}
+            <div className="flex min-h-0 flex-1 gap-3 overflow-x-scroll p-4">
+              {COLUMNS.filter((status) => visibleColumns.includes(status)).map((status) => (
+                <Column
+                  draggedStatus={draggedStatus}
+                  key={status}
+                  onDelete={handleDelete}
+                  onSelect={(task) => setSelectedTaskId(task.id)}
+                  projectTitles={projectTitles}
+                  selectedTaskId={selectedTaskId}
+                  status={status}
+                  tasks={byStatus.get(status) ?? []}
+                  threadCounts={threadCounts}
+                />
+              ))}
+            </div>
+          </DndContext>
+        )}
 
         {selectedTask ? (
           <TaskDetail
@@ -630,7 +707,9 @@ function TasksPage() {
             onAttach={(thread) => setThreadTask(thread, TaskId.make(selectedTask.id))}
             onClose={() => setSelectedTaskId(null)}
             onDetach={(thread) => setThreadTask(thread, null)}
+            compact={isMobile}
             onEdit={handleEdit}
+            onMove={handleMove}
             onOpenThread={(thread) => {
               void navigate({
                 to: "/$environmentId/$threadId",
