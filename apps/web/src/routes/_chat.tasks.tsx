@@ -109,7 +109,7 @@ function TaskCard({
       ref={setNodeRef}
       {...attributes}
       {...listeners}
-      className={`group rounded-md border bg-background p-2 text-left ${
+      className={`group w-full min-w-0 rounded-md border bg-background p-2 text-left ${
         selected ? "border-primary" : "border-border"
       } ${isDragging ? "opacity-50" : ""}`}
       onClick={() => onSelect(task)}
@@ -120,8 +120,8 @@ function TaskCard({
           {task.priority}
         </span>
       </div>
-      <div className="mt-1.5 flex flex-wrap items-center gap-1">
-        <span className="text-xs text-muted-foreground">{projectTitle}</span>
+      <div className="mt-1.5 flex w-full min-w-0 flex-wrap items-center gap-1">
+        <span className="max-w-full truncate text-xs text-muted-foreground">{projectTitle}</span>
         {threadCount > 0 ? (
           <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground">
             <MessagesSquareIcon className="size-3" />
@@ -134,7 +134,7 @@ function TaskCard({
           </Badge>
         ) : null}
         {task.labels.map((label) => (
-          <Badge key={label} size="sm" variant="outline">
+          <Badge className="max-w-full truncate" key={label} size="sm" variant="outline">
             {label}
           </Badge>
         ))}
@@ -185,7 +185,7 @@ function Column({
   return (
     <div
       ref={setNodeRef}
-      className={`flex ${compact ? "w-full" : "w-64 shrink-0"} flex-col rounded-lg border border-border bg-muted/40 ${
+      className={`flex ${compact ? "w-full min-w-0" : "w-64 shrink-0"} flex-col rounded-lg border border-border bg-muted/40 ${
         isOver && !illegalTarget ? "border-primary" : ""
       } ${illegalTarget ? "opacity-40" : ""}`}
     >
@@ -574,7 +574,7 @@ function TasksPage() {
     : [];
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 w-full min-w-0 flex-col overflow-x-hidden">
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 sm:px-4 sm:py-3">
         <h1 className="text-sm font-medium">Tasks</h1>
 
@@ -634,9 +634,9 @@ function TasksPage() {
         <p className="p-4 text-sm text-muted-foreground">No tasks match “{query.trim()}”.</p>
       ) : null}
 
-      <div className="relative flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 w-full min-w-0 flex-1">
         {isMobile ? (
-          <div className="flex min-h-0 flex-1 flex-col">
+          <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
             {/* Status picker instead of seven columns. Counts stay visible so the
               board still reads as a board rather than a filtered list. */}
             <div className="flex gap-1 overflow-x-auto border-b border-border px-3 py-2">
@@ -659,7 +659,7 @@ function TasksPage() {
             {/* No DndContext on touch: a drag sensor competes with the scroll
               gesture, and the detail panel's Move buttons are both reliable and
               self-documenting about which moves are legal. */}
-            <div className="min-h-0 flex-1 overflow-y-auto p-3">
+            <div className="min-h-0 w-full min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-3">
               <Column
                 compact
                 draggedStatus={null}

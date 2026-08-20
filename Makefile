@@ -25,6 +25,8 @@ T3_FORCE ?= 0
 # the server runs; the display may still sleep and the screen may still lock,
 # which is what you want. Closing the lid sleeps anyway. Set T3_AWAKE=0 to opt out.
 T3_AWAKE ?= 1
+# arm64 for Apple Silicon, x64 for Intel, universal for both (slower).
+T3_ARCH ?= $(if $(filter arm64,$(shell uname -m)),arm64,x64)
 AWAKE := $(if $(filter 1,$(T3_AWAKE)),caffeinate -ims,)
 LAN_IP := $(shell ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || hostname -I 2>/dev/null | awk '{print $$1}')
 
@@ -108,8 +110,14 @@ app: guard ## Run the built desktop app (build-app first)
 	@test -f apps/desktop/dist-electron/main.cjs || { echo "[make] Not built yet — run 'make build-app'"; exit 1; }
 	$(AWAKE) vp run --filter @t3tools/desktop start
 
+# --skip-build on purpose: build-app has already built the desktop and server,
+# and verified the bundled client is not pinned to loopback. Rebuilding here
+# would discard the artifact that check actually looked at.
+# Unsigned: --signed needs Apple credentials. macOS will need a right-click →
+# Open the first time.
 dmg: build-app ## Package an installable .dmg for /Applications
-	node scripts/build-desktop-artifact.ts --platform mac --target dmg
+	node scripts/build-desktop-artifact.ts \
+		--platform mac --target dmg --arch $(T3_ARCH) --skip-build
 
 pair: ## Mint a fresh pairing token for the running server and print it as a QR code
 	node apps/server/src/bin.ts pair --base-dir $(T3_HOME_DIR)
