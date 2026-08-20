@@ -30,7 +30,7 @@ T3_ARCH ?= $(if $(filter arm64,$(shell uname -m)),arm64,x64)
 AWAKE := $(if $(filter 1,$(T3_AWAKE)),caffeinate -ims,)
 LAN_IP := $(shell ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || hostname -I 2>/dev/null | awk '{print $$1}')
 
-.PHONY: help guard build-app app dmg dev lan dev-local dev-desktop dev-share pair ip install check test typecheck lint fmt
+.PHONY: help bootstrap require-deps guard build-app app dmg dev lan dev-local dev-desktop dev-share pair ip install check test typecheck lint fmt
 
 help: ## Show available targets
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  \033[36m%-13s\033[0m %s\n", $$1, $$2}'
@@ -51,6 +51,16 @@ help: ## Show available targets
 # server-runtime.json the CLI reads to find "the" server. The failures that
 # follow look like anything except the cause. Refuse instead.
 # Bypass with `make dev T3_FORCE=1` when you know the record is stale.
+# Every target below shells out to vp, which only exists after an install.
+# Without this the failure is `vp: command not found`, which does not tell you
+# that `make bootstrap` is the answer.
+require-deps:
+	@test -x node_modules/.bin/vp || { \
+		echo "[make] Dependencies are not installed yet (node_modules/.bin/vp missing)."; \
+		echo "[make] Run: make bootstrap"; \
+		exit 1; \
+	}
+
 guard:
 	@state="$(T3_HOME_DIR)/userdata/server-runtime.json"; \
 	if [ "$(T3_FORCE)" != "1" ] && [ -f "$$state" ]; then \
@@ -68,7 +78,7 @@ guard:
 # Browser dev with hot reload. Loopback only, and not fixable with a flag: the
 # runner deletes HOST before starting Vite (scripts/dev-runner.ts:359) so an
 # inherited one cannot pin Vite's HMR socket. Use `make lan` for a phone.
-dev: guard ## Dev stack with hot reload, on this machine only
+dev: require-deps guard ## Dev stack with hot reload, on this machine only
 	$(AWAKE) node scripts/dev-runner.ts dev --home-dir $(T3_HOME_DIR)
 
 # Phone/LAN access. Vite is loopback-only in every dev mode, so this skips it:
@@ -77,25 +87,25 @@ dev: guard ## Dev stack with hot reload, on this machine only
 # VITE_WS_URL unset, or the client is pinned to 127.0.0.1 — the page loads on
 # the phone and then silently dials the phone's own localhost.
 # No hot reload: re-run to pick up changes.
-lan: guard ## Phone/LAN access on one origin (builds the client, no hot reload)
+lan: require-deps guard ## Phone/LAN access on one origin (builds the client, no hot reload)
 	env -u VITE_HTTP_URL -u VITE_WS_URL -u HOST \
 		vp run --filter @t3tools/web build
 	$(AWAKE) node apps/server/src/bin.ts serve --base-dir $(T3_HOME_DIR) --host $(T3_HOST)
 
-dev-local: guard ## Dev stack on loopback only
+dev-local: require-deps guard ## Dev stack on loopback only
 	$(AWAKE) node scripts/dev-runner.ts dev --home-dir $(T3_HOME_DIR)
 
-dev-desktop: guard ## Electron app. Loopback only by design — not reachable from a phone.
+dev-desktop: require-deps guard ## Electron app. Loopback only by design — not reachable from a phone.
 	$(AWAKE) node scripts/dev-runner.ts dev:desktop --home-dir $(T3_HOME_DIR)
 
-dev-share: guard ## Dev stack published on the tailnet, prints a pairing URL
+dev-share: require-deps guard ## Dev stack published on the tailnet, prints a pairing URL
 	$(AWAKE) node scripts/dev-runner.ts dev --home-dir $(T3_HOME_DIR) --share
 
 # The desktop app, built from this checkout so it carries local changes.
 # The build must run with VITE_HTTP_URL/VITE_WS_URL unset: with them set (as
 # `dev:desktop` sets them) the bundled client is pinned to 127.0.0.1 and is
 # unusable from a phone, while still loading fine on this machine.
-build-app: ## Build the desktop app and its server from this checkout
+build-app: require-deps ## Build the desktop app and its server from this checkout
 	env -u VITE_HTTP_URL -u VITE_WS_URL -u HOST \
 		vp run --filter @t3tools/desktop --filter t3 build
 	@echo "[make] verifying the bundled client is origin-relative..."
@@ -106,7 +116,7 @@ build-app: ## Build the desktop app and its server from this checkout
 	fi
 	@echo "[make] ok — client resolves its API from the serving origin"
 
-app: guard ## Run the built desktop app (build-app first)
+app: require-deps guard ## Run the built desktop app (build-app first)
 	@test -f apps/desktop/dist-electron/main.cjs || { echo "[make] Not built yet — run 'make build-app'"; exit 1; }
 	$(AWAKE) vp run --filter @t3tools/desktop start
 
@@ -125,19 +135,35 @@ pair: ## Mint a fresh pairing token for the running server and print it as a QR 
 ip: ## Print this machine's LAN address
 	@echo $(LAN_IP)
 
-install: ## Install workspace dependencies
+# Fresh clone: `vp` does not exist yet, so `vp i` cannot be the first step.
+# Uses whichever pnpm is available, pinned to the version in package.json.
+PNPM_VERSION := $(shell python3 -c "import json;print(json.load(open('package.json'))['packageManager'].split('@')[1])" 2>/dev/null)
+bootstrap: ## First install on a fresh clone (no pnpm or vp required)
+	@node -e 'const v=process.versions.node.split(".")[0]; if (+v < 24) { console.error("[make] Node 24+ required, found "+process.versions.node); process.exit(1); }'
+	@if command -v pnpm >/dev/null 2>&1; then \
+		echo "[make] using pnpm $$(pnpm --version)"; pnpm install; \
+	elif command -v corepack >/dev/null 2>&1; then \
+		echo "[make] using corepack"; COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm@$(PNPM_VERSION) install; \
+	else \
+		echo "[make] no pnpm or corepack; fetching pnpm@$(PNPM_VERSION) via npx"; \
+		npx --yes pnpm@$(PNPM_VERSION) install; \
+	fi
+	@test -x node_modules/.bin/vp && echo "[make] vp is ready — 'make dev', 'make app', 'make lan' now work" \
+		|| { echo "[make] install finished but node_modules/.bin/vp is missing"; exit 1; }
+
+install: require-deps ## Reinstall dependencies (needs vp, i.e. after bootstrap)
 	vp i
 
 check: typecheck lint ## Typecheck and lint everything (CI owns the full suite)
 
-test: ## Run the full test suite
+test: require-deps ## Run the full test suite
 	vp run -r test
 
-typecheck: ## Typecheck every package
+typecheck: require-deps ## Typecheck every package
 	vp run -r --concurrency-limit 2 typecheck
 
-lint: ## Lint the workspace
+lint: require-deps ## Lint the workspace
 	vp lint --report-unused-disable-directives
 
-fmt: ## Format the workspace
+fmt: require-deps ## Format the workspace
 	vp fmt
