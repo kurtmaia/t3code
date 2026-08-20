@@ -1625,6 +1625,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               body: event.payload.body,
               labels: event.payload.labels,
               orderKey: event.payload.orderKey,
+              branch: event.payload.branch ?? null,
+              worktreePath: event.payload.worktreePath ?? null,
+              planMarkdown: event.payload.planMarkdown ?? null,
               source: event.payload.source ?? null,
               externalId: event.payload.externalId ?? null,
               createdAt: event.payload.createdAt,
@@ -1646,6 +1649,13 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               ...(event.payload.priority !== undefined ? { priority: event.payload.priority } : {}),
               ...(event.payload.body !== undefined ? { body: event.payload.body } : {}),
               ...(event.payload.labels !== undefined ? { labels: event.payload.labels } : {}),
+              ...(event.payload.branch !== undefined ? { branch: event.payload.branch } : {}),
+              ...(event.payload.worktreePath !== undefined
+                ? { worktreePath: event.payload.worktreePath }
+                : {}),
+              ...(event.payload.planMarkdown !== undefined
+                ? { planMarkdown: event.payload.planMarkdown }
+                : {}),
               updatedAt: event.payload.updatedAt,
             });
             return;

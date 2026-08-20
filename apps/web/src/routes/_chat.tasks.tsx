@@ -13,12 +13,15 @@ import {
 } from "@dnd-kit/core";
 import type { EnvironmentTask, EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
+  DEFAULT_PROVIDER_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
   TASK_STATUS_TRANSITIONS,
   TaskId,
   canTransitionTask,
   type TaskPriority,
   type TaskStatus,
 } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { MessagesSquareIcon, PlusIcon, SearchIcon, Trash2Icon, XIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -28,7 +31,8 @@ import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Textarea } from "~/components/ui/textarea";
 import { useIsMobile } from "~/hooks/useMediaQuery";
-import { newTaskId } from "~/lib/utils";
+import { useComposerDraftStore } from "~/composerDraftStore";
+import { newTaskId, newThreadId } from "~/lib/utils";
 import { useProjects, useTasks, useThreadShells } from "~/state/entities";
 import { taskEnvironment } from "~/state/taskCommands";
 import { threadEnvironment } from "~/state/threads";
@@ -220,6 +224,9 @@ function TaskDetail({
   onOpenThread,
   onEdit,
   onMove,
+  onNewThread,
+  onPlanWithAgent,
+  runningThreadCount,
   compact = false,
 }: {
   readonly task: EnvironmentTask;
@@ -231,9 +238,17 @@ function TaskDetail({
   readonly onOpenThread: (thread: EnvironmentThreadShell) => void;
   readonly onEdit: (
     task: EnvironmentTask,
-    changes: { readonly title?: string; readonly body?: string; readonly priority?: TaskPriority },
+    changes: {
+      readonly title?: string;
+      readonly body?: string;
+      readonly priority?: TaskPriority;
+      readonly planMarkdown?: string;
+    },
   ) => void;
   readonly onMove: (task: EnvironmentTask, status: TaskStatus) => void;
+  readonly onNewThread: (task: EnvironmentTask) => void;
+  readonly onPlanWithAgent: (task: EnvironmentTask) => void;
+  readonly runningThreadCount: number;
   readonly compact?: boolean;
 }) {
   const [attaching, setAttaching] = useState(false);
@@ -242,6 +257,7 @@ function TaskDetail({
   // the user is still typing.
   const [draftTitle, setDraftTitle] = useState(task.title);
   const [draftBody, setDraftBody] = useState(task.body);
+  const [draftPlan, setDraftPlan] = useState(task.planMarkdown ?? "");
 
   const commitTitle = () => {
     const next = draftTitle.trim();
@@ -255,6 +271,10 @@ function TaskDetail({
 
   const commitBody = () => {
     if (draftBody !== task.body) onEdit(task, { body: draftBody });
+  };
+
+  const commitPlan = () => {
+    if (draftPlan !== (task.planMarkdown ?? "")) onEdit(task, { planMarkdown: draftPlan });
   };
 
   return (
@@ -324,11 +344,47 @@ function TaskDetail({
         </p>
       ) : null}
 
+      <div className="mt-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-medium uppercase text-muted-foreground">Plan</h3>
+          <Button onClick={() => onPlanWithAgent(task)} size="sm" variant="ghost">
+            Plan with agent
+          </Button>
+        </div>
+        <Textarea
+          aria-label="Task plan"
+          className="mt-1"
+          onBlur={commitPlan}
+          onChange={(event) => setDraftPlan(event.target.value)}
+          placeholder="The agreed approach. Every thread started here begins with it."
+          rows={5}
+          value={draftPlan}
+        />
+        {draftPlan.trim().length > 0 ? (
+          <p className="mt-1 text-xs text-muted-foreground">
+            A plan already exists, so a new one from an agent stays in its thread rather than
+            replacing this. Clear this box first to have it filled automatically.
+          </p>
+        ) : null}
+      </div>
+
+      {runningThreadCount > 1 ? (
+        <p className="mt-3 rounded-md border border-border bg-muted/40 p-2 text-xs text-muted-foreground">
+          {runningThreadCount} threads are running in this task&apos;s workspace. They share one
+          working copy, so overlapping edits land on top of each other.
+        </p>
+      ) : null}
+
       <div className="mt-4 flex items-center justify-between">
         <h3 className="text-xs font-medium uppercase text-muted-foreground">Threads</h3>
-        <Button onClick={() => setAttaching((open) => !open)} size="sm" variant="ghost">
-          {attaching ? "Cancel" : "Attach"}
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button onClick={() => setAttaching((open) => !open)} size="sm" variant="ghost">
+            {attaching ? "Cancel" : "Attach"}
+          </Button>
+          <Button onClick={() => onNewThread(task)} size="sm" variant="outline">
+            New thread
+          </Button>
+        </div>
       </div>
 
       {threads.length === 0 && !attaching ? (
@@ -416,6 +472,7 @@ function TasksPage() {
   const setTaskStatus = useAtomCommand(taskEnvironment.setStatus);
   const deleteTask = useAtomCommand(taskEnvironment.delete);
   const updateThread = useAtomCommand(threadEnvironment.updateMetadata);
+  const createThread = useAtomCommand(threadEnvironment.create);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const collisionDetection = useCallback<CollisionDetection>((args) => {
@@ -542,6 +599,73 @@ function TasksPage() {
       });
     },
     [setTaskStatus],
+  );
+
+  // The brief a thread on this task starts from. Seeded into the composer
+  // rather than injected server-side: the text is visible before it is sent,
+  // and it works the same for every provider.
+  const buildTaskBrief = useCallback((task: EnvironmentTask) => {
+    const sections = [`# ${task.title}`];
+    if (task.body.trim().length > 0) sections.push(task.body.trim());
+    const plan = task.planMarkdown?.trim() ?? "";
+    if (plan.length > 0) sections.push(`## Plan\n\n${plan}`);
+    return `${sections.join("\n\n")}\n\n---\n\n`;
+  }, []);
+
+  // Created directly rather than through the draft flow: only thread.create
+  // carries a taskId, and the thread has to be linked at birth for the board
+  // to group it. The workspace comes from the task, so a second thread joins
+  // the worktree the first one established instead of making its own.
+  const startTaskThread = useCallback(
+    (task: EnvironmentTask, options?: { readonly plan?: boolean }) => {
+      const project = projects.find(
+        (entry) => entry.id === task.projectId && entry.environmentId === task.environmentId,
+      );
+      const modelSelection = project?.defaultModelSelection ?? null;
+      if (modelSelection === null) return;
+
+      const threadId = newThreadId();
+      void createThread({
+        environmentId: task.environmentId,
+        input: {
+          threadId,
+          projectId: task.projectId,
+          taskId: TaskId.make(task.id),
+          title: task.title,
+          modelSelection,
+          runtimeMode: DEFAULT_RUNTIME_MODE,
+          interactionMode: options?.plan === true ? "plan" : DEFAULT_PROVIDER_INTERACTION_MODE,
+          branch: task.branch ?? null,
+          worktreePath: task.worktreePath ?? null,
+          createdAt: new Date().toISOString(),
+        },
+      }).then((result) => {
+        if (result._tag !== "Success") return;
+        const ref = scopeThreadRef(task.environmentId, threadId);
+        // In plan mode the ask is explicit: the agent should read enough to
+        // propose an approach, and the promotion reactor copies whatever plan
+        // it produces onto the task when the task has none yet.
+        const prompt =
+          options?.plan === true
+            ? `${buildTaskBrief(task)}Read the relevant code and propose an implementation plan for this task. Do not change anything yet.`
+            : buildTaskBrief(task);
+        useComposerDraftStore.getState().setPrompt(ref, prompt);
+        void navigate({
+          to: "/$environmentId/$threadId",
+          params: { environmentId: task.environmentId, threadId },
+        });
+      });
+    },
+    [buildTaskBrief, createThread, navigate, projects],
+  );
+
+  const handleNewTaskThread = useCallback(
+    (task: EnvironmentTask) => startTaskThread(task),
+    [startTaskThread],
+  );
+  const handlePlanWithAgent = useCallback(
+    (task: EnvironmentTask) => startTaskThread(task, { plan: true }),
+    [startTaskThread],
   );
 
   const setThreadTask = useCallback(
@@ -710,6 +834,13 @@ function TasksPage() {
             compact={isMobile}
             onEdit={handleEdit}
             onMove={handleMove}
+            onNewThread={handleNewTaskThread}
+            onPlanWithAgent={handlePlanWithAgent}
+            runningThreadCount={
+              selectedThreads.filter(
+                (thread) => thread.latestTurn !== null && thread.latestTurn.state === "running",
+              ).length
+            }
             onOpenThread={(thread) => {
               void navigate({
                 to: "/$environmentId/$threadId",

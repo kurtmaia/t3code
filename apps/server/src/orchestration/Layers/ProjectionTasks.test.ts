@@ -12,10 +12,12 @@ import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityRes
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
+import { TaskPlanReactorLive } from "./TaskPlanReactor.ts";
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import { TaskPlanReactor } from "../Services/TaskPlanReactor.ts";
 import { ServerConfig } from "../../config.ts";
 
 const PROJECT_ID = ProjectId.make("project-tasks");
@@ -23,7 +25,8 @@ const TASK_ID = TaskId.make("task-1");
 const CREATED_AT = "2026-01-01T00:00:00.000Z";
 
 const engineLayer = it.layer(
-  OrchestrationEngineLive.pipe(
+  TaskPlanReactorLive.pipe(
+    Layer.provideMerge(OrchestrationEngineLive),
     // provideMerge, not provide: the test reads the snapshot the engine writes.
     Layer.provideMerge(OrchestrationProjectionSnapshotQueryLive),
     Layer.provide(ThreadBackgroundLiveness.layer),
@@ -197,6 +200,140 @@ engineLayer("task board round trip", (it) => {
         detached.threads.find((thread) => thread.id === "thread-group")?.taskId ?? null,
         null,
       );
+    }),
+  );
+
+  it.effect("carries the shared workspace and plan through the projection", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-project-plan"),
+        projectId: ProjectId.make("project-plan"),
+        title: "Plan Project",
+        workspaceRoot: "/tmp/project-plan",
+        createdAt: CREATED_AT,
+      });
+      yield* engine.dispatch({
+        type: "task.create",
+        commandId: CommandId.make("cmd-task-plan"),
+        taskId: TaskId.make("task-plan"),
+        projectId: ProjectId.make("project-plan"),
+        title: "Has a plan",
+        createdAt: CREATED_AT,
+      });
+      yield* engine.dispatch({
+        type: "task.meta.update",
+        commandId: CommandId.make("cmd-task-plan-set"),
+        taskId: TaskId.make("task-plan"),
+        planMarkdown: "1. Read the code\n2. Change it",
+        branch: "task/has-a-plan",
+        worktreePath: "/tmp/worktrees/has-a-plan",
+      });
+
+      const snapshot = yield* snapshotQuery.getCommandReadModel();
+      const task = snapshot.tasks.find((entry) => entry.id === "task-plan");
+      assert.equal(task?.planMarkdown, "1. Read the code\n2. Change it");
+      assert.equal(task?.branch, "task/has-a-plan");
+      assert.equal(task?.worktreePath, "/tmp/worktrees/has-a-plan");
+      // An unrelated edit must not clear the plan.
+      yield* engine.dispatch({
+        type: "task.meta.update",
+        commandId: CommandId.make("cmd-task-plan-rename"),
+        taskId: TaskId.make("task-plan"),
+        title: "Still has a plan",
+      });
+      const after = yield* snapshotQuery.getCommandReadModel();
+      const renamed = after.tasks.find((entry) => entry.id === "task-plan");
+      assert.equal(renamed?.title, "Still has a plan");
+      assert.equal(renamed?.planMarkdown, "1. Read the code\n2. Change it");
+    }),
+  );
+
+  it.effect("promotes a thread's proposed plan onto its task, but never over one that exists", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const reactor = yield* TaskPlanReactor;
+      yield* reactor.start();
+
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-project-promote"),
+        projectId: ProjectId.make("project-promote"),
+        title: "Promote Project",
+        workspaceRoot: "/tmp/project-promote",
+        createdAt: CREATED_AT,
+      });
+      yield* engine.dispatch({
+        type: "task.create",
+        commandId: CommandId.make("cmd-task-promote"),
+        taskId: TaskId.make("task-promote"),
+        projectId: ProjectId.make("project-promote"),
+        title: "Needs a plan",
+        createdAt: CREATED_AT,
+      });
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-promote"),
+        threadId: ThreadId.make("thread-promote"),
+        projectId: ProjectId.make("project-promote"),
+        taskId: TaskId.make("task-promote"),
+        title: "Planning",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "plan",
+        branch: null,
+        worktreePath: null,
+        createdAt: CREATED_AT,
+      });
+
+      yield* engine.dispatch({
+        type: "thread.proposed-plan.upsert",
+        commandId: CommandId.make("cmd-plan-1"),
+        threadId: ThreadId.make("thread-promote"),
+        proposedPlan: {
+          id: "plan-1",
+          turnId: null,
+          planMarkdown: "1. Read it\n2. Change it",
+          implementedAt: null,
+          implementationThreadId: null,
+          createdAt: CREATED_AT,
+          updatedAt: CREATED_AT,
+        },
+        createdAt: CREATED_AT,
+      });
+      yield* reactor.drain;
+
+      const filled = (yield* snapshotQuery.getCommandReadModel()).tasks.find(
+        (task) => task.id === "task-promote",
+      );
+      assert.equal(filled?.planMarkdown, "1. Read it\n2. Change it");
+
+      // A second proposal must not overwrite the plan now in place.
+      yield* engine.dispatch({
+        type: "thread.proposed-plan.upsert",
+        commandId: CommandId.make("cmd-plan-2"),
+        threadId: ThreadId.make("thread-promote"),
+        proposedPlan: {
+          id: "plan-2",
+          turnId: null,
+          planMarkdown: "A different approach entirely",
+          implementedAt: null,
+          implementationThreadId: null,
+          createdAt: CREATED_AT,
+          updatedAt: CREATED_AT,
+        },
+        createdAt: CREATED_AT,
+      });
+      yield* reactor.drain;
+
+      const unchanged = (yield* snapshotQuery.getCommandReadModel()).tasks.find(
+        (task) => task.id === "task-promote",
+      );
+      assert.equal(unchanged?.planMarkdown, "1. Read it\n2. Change it");
     }),
   );
 

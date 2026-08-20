@@ -493,6 +493,14 @@ export const OrchestrationTask = Schema.Struct({
       task read out of a project's committed `.tower/tasks` folder. Null for a
       task created here. Imports are read-only: the external tool stays the
       only writer of its own files. */
+  /** Where this task's threads work. The first thread created under the task
+      establishes it; later threads join the same worktree so their edits
+      compose instead of landing in separate copies of the repository. */
+  branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  /** The agreed approach, written by hand or promoted from a thread that ran
+      in plan mode. Seeded into every new thread started on this task. */
+  planMarkdown: Schema.optional(Schema.NullOr(TrimmedString)),
   source: Schema.optional(Schema.NullOr(TaskSource)),
   /** Identity in the source system, unique per project. For tower this is the
       task filename stem, which tower treats as authoritative over frontmatter.
@@ -1029,6 +1037,9 @@ const TaskCreateCommand = Schema.Struct({
   body: Schema.optional(TrimmedString),
   labels: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   orderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  planMarkdown: Schema.optional(Schema.NullOr(TrimmedString)),
   source: Schema.optional(Schema.NullOr(TaskSource)),
   externalId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   createdAt: IsoDateTime,
@@ -1045,6 +1056,9 @@ const TaskMetaUpdateCommand = Schema.Struct({
   priority: Schema.optional(TaskPriority),
   body: Schema.optional(TrimmedString),
   labels: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  planMarkdown: Schema.optional(Schema.NullOr(TrimmedString)),
 });
 
 const TaskStatusSetCommand = Schema.Struct({
@@ -1512,6 +1526,9 @@ export const TaskCreatedPayload = Schema.Struct({
   body: TrimmedString,
   labels: Schema.Array(TrimmedNonEmptyString),
   orderKey: Schema.NullOr(TrimmedNonEmptyString),
+  branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  planMarkdown: Schema.optional(Schema.NullOr(TrimmedString)),
   source: Schema.optional(Schema.NullOr(TaskSource)),
   externalId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   createdAt: IsoDateTime,
@@ -1524,6 +1541,9 @@ export const TaskMetaUpdatedPayload = Schema.Struct({
   priority: Schema.optional(TaskPriority),
   body: Schema.optional(TrimmedString),
   labels: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  planMarkdown: Schema.optional(Schema.NullOr(TrimmedString)),
   updatedAt: IsoDateTime,
 });
 
