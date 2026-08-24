@@ -100,6 +100,34 @@ export function requireActiveProjectWorkspaceRootAbsent(input: {
   );
 }
 
+/**
+ * A context root is where a project lives, so it must be the workspace root itself or one of
+ * its ancestors. Paths arrive already absolutized by the normalizer; this only compares them.
+ */
+export function requireContextRootContainsWorkspaceRoot(input: {
+  readonly command: OrchestrationCommand;
+  readonly workspaceRoot: string;
+  readonly contextRoot: string;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  const workspaceRoot = normalizeProjectPathForComparison(input.workspaceRoot);
+  const contextRoot = normalizeProjectPathForComparison(input.contextRoot);
+  const separator = /^(?:[a-z]:|\\\\)/i.test(contextRoot) ? "\\" : "/";
+  const contained =
+    workspaceRoot === contextRoot ||
+    workspaceRoot.startsWith(
+      contextRoot.endsWith(separator) ? contextRoot : `${contextRoot}${separator}`,
+    );
+  if (contained) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Context root '${contextRoot}' must contain workspace root '${workspaceRoot}'.`,
+    ),
+  );
+}
+
 export function requireThread(input: {
   readonly readModel: OrchestrationReadModel;
   readonly command: OrchestrationCommand;

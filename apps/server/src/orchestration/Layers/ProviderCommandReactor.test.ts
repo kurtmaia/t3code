@@ -2044,6 +2044,64 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  it("hands the project's context root to the provider and restarts when it changes", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const turnStart = (suffix: string) =>
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make(`cmd-turn-start-context-${suffix}`),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId(`user-message-context-${suffix}`),
+          role: "user",
+          text: `turn ${suffix}`,
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      });
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "project.meta.update",
+        commandId: CommandId.make("cmd-project-context-root-set"),
+        projectId: asProjectId("project-1"),
+        contextRoot: "/tmp",
+      }),
+    );
+    await Effect.runPromise(turnStart("1"));
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      cwd: "/tmp/provider-project",
+      contextRoot: "/tmp",
+    });
+
+    // Same root again: the live session is kept.
+    await Effect.runPromise(turnStart("2"));
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    expect(harness.startSession.mock.calls.length).toBe(1);
+
+    // Clearing it is a grant change, so the session restarts with its resume state intact.
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "project.meta.update",
+        commandId: CommandId.make("cmd-project-context-root-clear"),
+        projectId: asProjectId("project-1"),
+        contextRoot: null,
+      }),
+    );
+    await Effect.runPromise(turnStart("3"));
+    await waitFor(() => harness.sendTurn.mock.calls.length === 3);
+    expect(harness.startSession.mock.calls.length).toBe(2);
+    expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
+      cwd: "/tmp/provider-project",
+      resumeCursor: { opaque: "resume-1" },
+    });
+    expect(harness.startSession.mock.calls[1]?.[1]).not.toHaveProperty("contextRoot");
+  });
+
   it("restarts claude sessions when claude effort changes", async () => {
     const harness = await createHarness({
       threadModelSelection: {

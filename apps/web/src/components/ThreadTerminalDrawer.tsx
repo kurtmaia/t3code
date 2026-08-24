@@ -66,6 +66,9 @@ import { serverEnvironment } from "../state/server";
 import { previewEnvironment } from "../state/preview";
 import { terminalEnvironment } from "../state/terminal";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
+import { useKeyboardInset } from "~/hooks/useKeyboardInset";
+import { useMediaQuery } from "~/hooks/useMediaQuery";
+import { TerminalKeyBar } from "./TerminalKeyBar";
 import { useAtomCommand } from "../state/use-atom-command";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import {
@@ -1073,6 +1076,20 @@ export default function ThreadTerminalDrawer({
   terminalLaunchLocationsById,
 }: ThreadTerminalDrawerProps) {
   const isPanel = mode === "panel";
+  // Gated on pointer, not width: an iPad in landscape is wide and still has no
+  // Esc key, while a narrow desktop window has a real keyboard.
+  const isTouchInput = useMediaQuery("(pointer: coarse)");
+  const keyboardInset = useKeyboardInset();
+  const runKeyBarWrite = useAtomCommand(terminalEnvironment.write, { reportFailure: false });
+  const sendKeyBarInput = useCallback(
+    (data: string) => {
+      void runKeyBarWrite({
+        environmentId: threadRef.environmentId,
+        input: { threadId, terminalId: activeTerminalId, data },
+      });
+    },
+    [activeTerminalId, runKeyBarWrite, threadId, threadRef.environmentId],
+  );
   const [advancedTypography] = useLocalStorage(
     TYPOGRAPHY_ADVANCED_STORAGE_KEY,
     false,
@@ -1414,7 +1431,18 @@ export default function ThreadTerminalDrawer({
         "thread-terminal-drawer relative flex min-w-0 flex-col overflow-hidden bg-background",
         isPanel ? "h-full flex-1" : "shrink-0 border-t border-border/80",
       )}
-      style={isPanel ? undefined : { height: `${drawerHeight}px` }}
+      style={
+        isPanel
+          ? undefined
+          : {
+              height: `${drawerHeight}px`,
+              // iOS paints the keyboard over the page rather than shrinking it,
+              // so a drawer anchored to the bottom ends up underneath. Lift it
+              // by exactly what the keyboard covers; 0 everywhere else, which
+              // leaves desktop untouched.
+              ...(keyboardInset > 0 ? { transform: `translateY(-${keyboardInset}px)` } : {}),
+            }
+      }
     >
       {!isPanel ? (
         <div
@@ -1698,6 +1726,7 @@ export default function ThreadTerminalDrawer({
           )}
         </div>
       </div>
+      {isTouchInput ? <TerminalKeyBar onKey={sendKeyBarInput} /> : null}
     </aside>
   );
 }

@@ -78,6 +78,7 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
   readonly variant: ThreadListVariant;
   readonly project: EnvironmentProject;
   readonly title: string;
+  readonly eyebrow?: string | null;
   readonly threadCount: number;
   readonly collapsed: boolean;
   readonly isFirst: boolean;
@@ -124,7 +125,7 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ expanded: !props.collapsed }}
-        accessibilityLabel={`${props.title}, ${props.threadCount} threads`}
+        accessibilityLabel={`${props.eyebrow ? `${props.eyebrow}, ` : ""}${props.title}, ${props.threadCount} threads`}
         accessibilityHint={props.collapsed ? "Expands the project" : "Collapses the project"}
         className={
           compact ? "flex-1 flex-row items-center gap-2.5" : "flex-1 flex-row items-center gap-2"
@@ -140,29 +141,41 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
           projectTitle={props.project.title}
           workspaceRoot={props.project.workspaceRoot}
         />
-        <Text
-          className={
-            compact
-              ? "flex-shrink text-base font-t3-bold tracking-[0.2px] text-foreground-muted"
-              : "flex-shrink text-sm font-t3-bold tracking-[0.2px] text-foreground-muted"
-          }
-          numberOfLines={1}
-        >
-          {props.title}
-        </Text>
-        <Text
-          className={
-            compact
-              ? "flex-1 text-sm font-t3-medium text-foreground-tertiary"
-              : "flex-1 text-xs font-t3-medium text-foreground-tertiary"
-          }
-        >
-          {props.threadCount}
-        </Text>
+        <View className="min-w-0 flex-1">
+          {props.eyebrow ? (
+            <Text
+              className="text-[10px] font-t3-medium uppercase tracking-[0.6px] text-foreground-tertiary"
+              numberOfLines={1}
+            >
+              {props.eyebrow}
+            </Text>
+          ) : null}
+          <View className="flex-row items-center gap-2">
+            <Text
+              className={
+                compact
+                  ? "flex-shrink text-base font-t3-bold tracking-[0.2px] text-foreground-muted"
+                  : "flex-shrink text-sm font-t3-bold tracking-[0.2px] text-foreground-muted"
+              }
+              numberOfLines={1}
+            >
+              {props.title}
+            </Text>
+            <Text
+              className={
+                compact
+                  ? "flex-1 text-sm font-t3-medium text-foreground-tertiary"
+                  : "flex-1 text-xs font-t3-medium text-foreground-tertiary"
+              }
+            >
+              {props.threadCount}
+            </Text>
+          </View>
+        </View>
       </Pressable>
       {showNewThreadButton ? (
         <Pressable
-          accessibilityLabel={`Create new thread in ${props.title}`}
+          accessibilityLabel={`Create new thread in ${props.eyebrow ? `${props.eyebrow}, ` : ""}${props.title}`}
           accessibilityRole="button"
           hitSlop={{ ...verticalHitSlop, left: 10, right: 14 }}
           onPress={handleNewThread}

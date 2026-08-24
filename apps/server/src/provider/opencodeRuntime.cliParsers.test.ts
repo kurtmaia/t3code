@@ -2,7 +2,11 @@ import * as NodeAssert from "node:assert/strict";
 
 import { describe, it } from "vite-plus/test";
 
-import { parseModelsCliOutput, parseAgentListCliOutput } from "./opencodeRuntime.ts";
+import {
+  buildOpenCodePermissionRules,
+  parseModelsCliOutput,
+  parseAgentListCliOutput,
+} from "./opencodeRuntime.ts";
 
 describe("parseModelsCliOutput", () => {
   it("parses a single model from a single provider", () => {
@@ -250,5 +254,34 @@ describe("parseAgentListCliOutput", () => {
     const result = parseAgentListCliOutput(stdout);
     NodeAssert.equal(result[0]!.hidden, true);
     NodeAssert.equal(result[1]!.hidden, false);
+  });
+});
+
+describe("buildOpenCodePermissionRules", () => {
+  it("leaves the supervised ruleset alone without a context root", () => {
+    const rules = buildOpenCodePermissionRules("approval-required");
+    NodeAssert.deepEqual(
+      rules.filter((rule) => rule.permission === "external_directory"),
+      [{ permission: "external_directory", pattern: "*", action: "ask" }],
+    );
+  });
+
+  it("allows the context root after the external_directory ask so the later rule wins", () => {
+    const rules = buildOpenCodePermissionRules("approval-required", {
+      contextRoot: "/work/freight/",
+    });
+    const external = rules.filter((rule) => rule.permission === "external_directory");
+    NodeAssert.deepEqual(external, [
+      { permission: "external_directory", pattern: "*", action: "ask" },
+      { permission: "external_directory", pattern: "/work/freight", action: "allow" },
+      { permission: "external_directory", pattern: "/work/freight/**", action: "allow" },
+    ]);
+  });
+
+  it("has nothing to add in full access, which already allows everything", () => {
+    NodeAssert.deepEqual(
+      buildOpenCodePermissionRules("full-access", { contextRoot: "/work/freight" }),
+      [{ permission: "*", pattern: "*", action: "allow" }],
+    );
   });
 });

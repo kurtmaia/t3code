@@ -87,7 +87,7 @@ export function HomeRouteScreen() {
         projectGroupingMode: listOptions.projectGroupingMode,
       }).map((scope) => ({
         key: scope.key,
-        label: scope.title,
+        label: scope.groupLabel ? `${scope.groupLabel} · ${scope.title}` : scope.title,
       })),
     [listOptions.projectGroupingMode, projects, selectedEnvironmentId],
   );

@@ -242,7 +242,7 @@ function itemSummary({
     }
     return (
       <span>
-        Could not verify {item.label}. {item.installHint}
+        Could not verify {item.label}. {optionLabel(auth.detail) ?? item.installHint}
       </span>
     );
   }

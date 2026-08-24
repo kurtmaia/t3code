@@ -72,6 +72,33 @@ function buildGroups(
 }
 
 describe("buildHomeThreadGroups", () => {
+  it("carries the context-root folder name into project scopes and thread groups", () => {
+    const environmentId = EnvironmentId.make("environment-local");
+    const project = makeProject({
+      environmentId,
+      id: ProjectId.make("freight-model"),
+      title: "Freight model",
+      workspaceRoot: "/work/freight/model",
+      contextRoot: "/work/freight",
+    });
+    const thread = makeThread({
+      environmentId,
+      id: ThreadId.make("thread-freight"),
+      projectId: project.id,
+      title: "Model work",
+    });
+
+    const scopes = buildHomeProjectScopes({
+      projects: [project],
+      environmentId: null,
+      projectGroupingMode: "repository",
+    });
+    const groups = buildGroups([project], [thread]);
+
+    expect(scopes[0]?.groupLabel).toBe("freight");
+    expect(groups[0]?.groupLabel).toBe("freight");
+  });
+
   it("builds one v2 scope for the same repository across environments", () => {
     const localEnvironmentId = EnvironmentId.make("environment-local");
     const remoteEnvironmentId = EnvironmentId.make("environment-remote");

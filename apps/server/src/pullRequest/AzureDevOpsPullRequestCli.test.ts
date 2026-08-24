@@ -1,5 +1,6 @@
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -610,4 +611,49 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       assert.strictEqual(mockedExecute.mock.calls.length, 0);
     }),
   );
+  it.effect("reports the viewer as unavailable when only a PAT is signed in", () =>
+    Effect.gen(function* () {
+      // `az devops login` leaves no `az account show` identity at all, so the command exits
+      // non-zero. That is an unnamed viewer, not a broken CLI, and a listing still reads.
+      mockedExecute.mockReturnValueOnce(
+        Effect.fail(
+          new AzureDevOpsCli.AzureDevOpsCommandFailedError({
+            operation: "execute",
+            command: "az",
+            cwd: "/w",
+            argumentCount: 7,
+            cause: "Please run 'az login' to setup account.",
+          }),
+        ),
+      );
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      const error = yield* Effect.flip(cli.getViewer({ cwd: "/w" }));
+
+      assert.strictEqual(error._tag, "AzureDevOpsViewerUnavailableError");
+    }),
+  );
 });
+
+it.effect("uses the configured viewer instead of asking the CLI who is signed in", () =>
+  Effect.gen(function* () {
+    const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+    const viewer = yield* cli.getViewer({ cwd: "/w" });
+
+    assert.strictEqual(viewer, "bilal@acme.dev");
+    // The whole point of configuring one: a PAT sign-in has nobody to ask.
+    assert.strictEqual(mockedExecute.mock.calls.length, 0);
+  }).pipe(
+    Effect.provide(
+      AzureDevOpsPullRequestCli.layer.pipe(
+        Layer.provide(Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({ execute: mockedExecute })),
+        Layer.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({ env: { T3CODE_AZURE_DEVOPS_USER: "bilal@acme.dev" } }),
+          ),
+        ),
+      ),
+    ),
+  ),
+);

@@ -5,6 +5,7 @@ import type { EnvironmentProject } from "./models.ts";
 import {
   buildProjectGroups,
   derivePhysicalProjectKey,
+  groupByContextRoot,
   type ProjectGroupingSettings,
 } from "./projectGrouping.ts";
 
@@ -212,5 +213,75 @@ describe("buildProjectGroups", () => {
     });
     expect(groups).toHaveLength(1);
     expect(groups[0]?.members.map((member) => member.project.id)).toEqual(["winner", "sibling"]);
+  });
+});
+
+describe("groupByContextRoot", () => {
+  const ids = (sections: ReadonlyArray<{ items: ReadonlyArray<EnvironmentProject> }>) =>
+    sections.map((section) => section.items.map((item) => item.id));
+
+  it("keeps projects without a context root in one unlabeled section", () => {
+    const sections = groupByContextRoot(
+      [makeProject("a", "/work/a"), makeProject("b", "/work/b")],
+      (project) => project,
+    );
+    expect(sections).toHaveLength(1);
+    expect(sections[0]).toMatchObject({ key: null, label: null, contextRoot: null });
+    expect(ids(sections)).toEqual([["a", "b"]]);
+  });
+
+  it("labels a section by the folder name and puts the folder's own project first", () => {
+    const sections = groupByContextRoot(
+      [
+        makeProject("model", "/work/freight/nam-freight-model", { contextRoot: "/work/freight" }),
+        makeProject("loose", "/work/loose"),
+        makeProject("freight", "/work/freight", { contextRoot: "/work/freight/" }),
+        makeProject("data", "/work/freight/nam-freight-data", { contextRoot: "/work/freight/" }),
+      ],
+      (project) => project,
+    );
+    expect(sections.map((section) => section.label)).toEqual(["freight", null]);
+    expect(ids(sections)).toEqual([["freight", "model", "data"], ["loose"]]);
+  });
+
+  it("emits sections in order of first appearance so the caller's sort is preserved", () => {
+    const sections = groupByContextRoot(
+      [
+        makeProject("p-api", "/work/pricing/api", { contextRoot: "/work/pricing" }),
+        makeProject("solo", "/work/solo"),
+        makeProject("f-model", "/work/freight/model", { contextRoot: "/work/freight" }),
+        makeProject("p-dash", "/work/pricing/dash", { contextRoot: "/work/pricing" }),
+      ],
+      (project) => project,
+    );
+    expect(sections.map((section) => section.label)).toEqual(["pricing", null, "freight"]);
+    expect(ids(sections)).toEqual([["p-api", "p-dash"], ["solo"], ["f-model"]]);
+  });
+
+  it("treats Windows spellings of one folder as the same section", () => {
+    const sections = groupByContextRoot(
+      [
+        makeProject("one", "C:\\Work\\Freight\\one", { contextRoot: "C:\\Work\\Freight" }),
+        makeProject("two", "c:/work/freight/two", { contextRoot: "c:/work/freight/" }),
+      ],
+      (project) => project,
+    );
+    expect(sections).toHaveLength(1);
+    expect(sections[0]?.label).toBe("Freight");
+    expect(ids(sections)).toEqual([["one", "two"]]);
+  });
+
+  it("runs over wrapper shapes through the selector", () => {
+    const sections = groupByContextRoot(
+      [
+        { group: makeProject("model", "/work/freight/model", { contextRoot: "/work/freight" }) },
+        { group: makeProject("solo", "/work/solo") },
+      ],
+      (entry) => entry.group,
+    );
+    expect(sections.map((section) => section.items.map((entry) => entry.group.id))).toEqual([
+      ["model"],
+      ["solo"],
+    ]);
   });
 });

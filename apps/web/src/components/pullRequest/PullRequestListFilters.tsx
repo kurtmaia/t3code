@@ -22,6 +22,7 @@ import {
 import type { ElementType } from "react";
 
 import { cn } from "~/lib/utils";
+import { groupByContextRoot } from "~/logicalProject";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
@@ -237,6 +238,7 @@ export function PullRequestFiltersMenu({
     readonly environmentId: EnvironmentId;
     readonly title: string;
     readonly workspaceRoot: string;
+    readonly contextRoot?: string | null;
   }>;
   projectId: ProjectId | undefined;
   /**
@@ -378,14 +380,27 @@ export function PullRequestFiltersMenu({
             </span>
           </MenuRadioItem>
           {/* The ones that can be chosen first: a list that opens with three disabled rows reads
-              as a broken menu rather than as a workspace with three unreadable repositories. */}
-          {projects
-            .toSorted(
+              as a broken menu rather than as a workspace with three unreadable repositories.
+              Repositories that share a folder sit together under its name. */}
+          {groupByContextRoot(
+            projects.toSorted(
               (left, right) =>
                 Number(unavailable.has(pullRequestProjectKey(left))) -
                 Number(unavailable.has(pullRequestProjectKey(right))),
-            )
-            .map((project) => {
+            ),
+            (project) => ({
+              workspaceRoot: project.workspaceRoot,
+              contextRoot: project.contextRoot,
+            }),
+          ).flatMap((section) => [
+            ...(section.label
+              ? [
+                  <MenuGroupLabel key={`section:${section.key}`} className="pt-2">
+                    {section.label}
+                  </MenuGroupLabel>,
+                ]
+              : []),
+            ...section.items.map((project) => {
               const reason = unavailable.get(pullRequestProjectKey(project));
               const item = (
                 <MenuRadioItem
@@ -419,7 +434,8 @@ export function PullRequestFiltersMenu({
                   </TooltipPopup>
                 </Tooltip>
               );
-            })}
+            }),
+          ])}
         </MenuRadioGroup>
       </MenuPopup>
     </Menu>

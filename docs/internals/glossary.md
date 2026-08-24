@@ -24,6 +24,13 @@ The top-level workspace record in the app. In [the orchestration contracts][1], 
 
 The root filesystem path for a project. In [the orchestration model][1], it is the base directory for branches and optional worktrees. See [workspace-layout.md][2].
 
+#### Context root
+
+An optional ancestor directory that groups related projects. Projects sharing a context root are
+shown together under the directory name, and their agents may read shared files and neighboring
+repositories from that directory. The workspace root remains the project's working directory, so
+source control, worktrees, checkpoints, diffs, and restores stay scoped to one repository.
+
 #### Worktree
 
 A Git worktree used as an isolated workspace for a thread. If a thread has a `worktreePath` in [the contracts][1], it runs there instead of in the main working tree. Git operations live behind the VCS driver contract in `apps/server/src/vcs/VcsDriver.ts`, implemented by [GitVcsDriverCore.ts][3].

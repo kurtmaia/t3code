@@ -1,4 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { inferProjectTitleFromPath } from "@t3tools/client-runtime/state/projects";
 import { pullRequestHostOf, ThreadId } from "@t3tools/contracts";
 import type {
   EnvironmentId,
@@ -298,6 +299,7 @@ function PullRequestsRouteView() {
             ? `${project.title} · ${environmentLabels.get(project.environmentId) ?? project.environmentId}`
             : project.title,
         workspaceRoot: project.workspaceRoot,
+        contextRoot: project.contextRoot ?? null,
       }))
       .toSorted((left, right) => left.title.localeCompare(right.title));
   }, [environmentLabels, projects]);
@@ -1478,6 +1480,9 @@ function PullRequestsRouteView() {
     />
   );
   const columnProps = {
+    title: scopedProject?.contextRoot
+      ? `${inferProjectTitleFromPath(scopedProject.contextRoot)} / ${scopedProject.title}`
+      : "Pull Requests",
     refreshing,
     onRefresh: () => void refreshFromHost(),
     searchValue: search.q ?? "",
@@ -1747,6 +1752,7 @@ function ExpandableSearch({
  * descendant rules.
  */
 function PullRequestsColumn({
+  title,
   refreshing,
   onRefresh,
   searchValue,
@@ -1763,6 +1769,7 @@ function PullRequestsColumn({
   rightPanelOpen,
   listBody,
 }: {
+  title: string;
   refreshing: boolean;
   onRefresh: () => void;
   searchValue: string;
@@ -1856,7 +1863,7 @@ function PullRequestsColumn({
                 its compact scope, grouped as the second crumb rather than pretending each menu
                 is a separate page in the hierarchy. */}
             <WorkspaceBreadcrumbItem current>
-              <h1 className="truncate">Pull Requests</h1>
+              <h1 className="truncate">{title}</h1>
             </WorkspaceBreadcrumbItem>
             <WorkspaceBreadcrumbSeparator />
             <WorkspaceBreadcrumbItem className="gap-1.5 overflow-hidden">
@@ -1885,7 +1892,7 @@ function PullRequestsColumn({
         ) : (
           <WorkspaceBreadcrumb ariaLabel="Pull requests breadcrumb">
             <WorkspaceBreadcrumbItem current>
-              <h1 className="truncate">Pull Requests</h1>
+              <h1 className="truncate">{title}</h1>
             </WorkspaceBreadcrumbItem>
           </WorkspaceBreadcrumb>
         )}

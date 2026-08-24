@@ -283,7 +283,7 @@ function ThreadNavigationSidebarPane(
     () =>
       projectScopes.map((scope) => ({
         key: scope.key,
-        label: scope.title,
+        label: scope.groupLabel ? `${scope.groupLabel} · ${scope.title}` : scope.title,
       })),
     [projectScopes],
   );
@@ -1051,6 +1051,7 @@ function ThreadNavigationSidebarPane(
               onNewThread={props.onNewThreadInProject}
               project={item.group.representative}
               threadCount={item.group.threads.length + item.group.pendingTasks.length}
+              eyebrow={item.group.groupLabel}
               title={item.group.title}
             />
           );

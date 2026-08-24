@@ -959,6 +959,7 @@ export function HomeScreen(props: HomeScreenProps) {
               onNewThread={props.onNewThreadInProject}
               project={item.group.representative}
               threadCount={item.group.threads.length + item.group.pendingTasks.length}
+              eyebrow={item.group.groupLabel}
               title={item.group.title}
             />
           );

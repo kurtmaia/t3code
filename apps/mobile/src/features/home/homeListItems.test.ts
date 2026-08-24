@@ -65,6 +65,7 @@ function makeGroup(key: string, threadCount: number): HomeThreadGroup {
   return {
     key,
     title: key,
+    groupLabel: null,
     representative: project,
     projects: [project],
     pendingTasks: [],
@@ -169,6 +170,7 @@ describe("buildHomeListLayout", () => {
     const group: HomeThreadGroup = {
       key: "stale",
       title: "stale",
+      groupLabel: null,
       representative: project,
       projects: [project],
       pendingTasks: [],

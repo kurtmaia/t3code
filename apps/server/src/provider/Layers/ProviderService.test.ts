@@ -989,6 +989,50 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("tells the agent about the context root on the first turn of a session only", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+
+      const session = yield* provider.startSession(asThreadId("thread-context"), {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId: asThreadId("thread-context"),
+        cwd: "/work/freight/nam-freight-model",
+        contextRoot: "/work/freight/",
+        runtimeMode: "full-access",
+      });
+
+      routing.codex.sendTurn.mockClear();
+      yield* provider.sendTurn({ threadId: session.threadId, input: "first" });
+      const first = routing.codex.sendTurn.mock.calls[0]?.[0] as ProviderSendTurnInput;
+      assert.equal(first.input?.startsWith("first"), true);
+      assert.include(first.input ?? "", 'part of "freight"');
+      assert.include(first.input ?? "", "live at: /work/freight/");
+
+      // Said once; the second turn is the user's words alone.
+      routing.codex.sendTurn.mockClear();
+      yield* provider.sendTurn({ threadId: session.threadId, input: "second" });
+      const second = routing.codex.sendTurn.mock.calls[0]?.[0] as ProviderSendTurnInput;
+      assert.equal(second.input, "second");
+
+      // A restart is a new session, so the note comes back with it.
+      yield* provider.startSession(asThreadId("thread-context"), {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId: asThreadId("thread-context"),
+        cwd: "/work/freight/nam-freight-model",
+        contextRoot: "/work/freight",
+        runtimeMode: "full-access",
+      });
+      routing.codex.sendTurn.mockClear();
+      yield* provider.sendTurn({ threadId: session.threadId, input: "third" });
+      const third = routing.codex.sendTurn.mock.calls[0]?.[0] as ProviderSendTurnInput;
+      assert.include(third.input ?? "", "live at: /work/freight.");
+
+      yield* provider.stopSession({ threadId: session.threadId });
+    }),
+  );
+
   it.effect("recovers stale persisted sessions for rollback by resuming thread identity", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;

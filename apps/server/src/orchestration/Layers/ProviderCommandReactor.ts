@@ -325,6 +325,10 @@ const make = Effect.gen(function* () {
     );
 
   const threadModelSelections = new Map<string, ModelSelection>();
+  // The context root each live session was started with. A reused session carries the grant
+  // it was born with, so a changed root has to restart it; only sessions this reactor started
+  // can be reused, which is why a process-local map is enough.
+  const threadContextRoots = new Map<string, string | null>();
 
   const appendProviderFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -604,6 +608,9 @@ const make = Effect.gen(function* () {
       thread,
       projects: project ? [project] : [],
     });
+    // Read from the project, never from the cwd: a worktree lives under T3 home, and the
+    // context root describes where the project's checkout sits, not where this thread runs.
+    const contextRoot = project?.contextRoot ?? null;
 
     const startProviderSession = (input?: {
       readonly resumeCursor?: unknown;
@@ -614,6 +621,7 @@ const make = Effect.gen(function* () {
         ...(preferredProvider ? { provider: preferredProvider } : {}),
         providerInstanceId: desiredInstanceId,
         ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
+        ...(contextRoot ? { contextRoot } : {}),
         ...(thread.title ? { title: thread.title } : {}),
         modelSelection: desiredModelSelection,
         ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
@@ -622,6 +630,7 @@ const make = Effect.gen(function* () {
 
     const bindSessionToThread = (session: ProviderSession) =>
       Effect.gen(function* () {
+        threadContextRoots.set(threadId, contextRoot);
         if (session.providerInstanceId === undefined) {
           return yield* new ProviderAdapterRequestError({
             provider: providerErrorLabel(session.provider),
@@ -654,6 +663,7 @@ const make = Effect.gen(function* () {
     if (existingSessionThreadId) {
       const runtimeModeChanged = thread.runtimeMode !== thread.session?.runtimeMode;
       const cwdChanged = effectiveCwd !== activeSession?.cwd;
+      const contextRootChanged = (threadContextRoots.get(threadId) ?? null) !== contextRoot;
       const sessionModelSwitch = (yield* providerService.getCapabilities(desiredInstanceId))
         .sessionModelSwitch;
       const modelChanged =
@@ -672,6 +682,7 @@ const make = Effect.gen(function* () {
       if (
         !runtimeModeChanged &&
         !cwdChanged &&
+        !contextRootChanged &&
         !instanceChanged &&
         !shouldRestartForModelChange &&
         !shouldRestartForModelSelectionChange
@@ -695,6 +706,7 @@ const make = Effect.gen(function* () {
         previousCwd: activeSession?.cwd,
         desiredCwd: effectiveCwd,
         cwdChanged,
+        contextRootChanged,
         modelChanged,
         instanceChanged,
         shouldRestartForModelChange,

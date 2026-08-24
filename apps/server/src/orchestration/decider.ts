@@ -15,6 +15,7 @@ import {
   listTasksByProjectId,
   listThreadsByProjectId,
   requireActiveProjectWorkspaceRootAbsent,
+  requireContextRootContainsWorkspaceRoot,
   requireLegalTaskTransition,
   requireProject,
   requireProjectAbsent,
@@ -242,6 +243,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         workspaceRoot: command.workspaceRoot,
         exceptProjectId: command.projectId,
       });
+      if (typeof command.contextRoot === "string") {
+        yield* requireContextRootContainsWorkspaceRoot({
+          command,
+          workspaceRoot: command.workspaceRoot,
+          contextRoot: command.contextRoot,
+        });
+      }
 
       return {
         ...(yield* withEventBase({
@@ -257,6 +265,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           workspaceRoot: command.workspaceRoot,
           defaultModelSelection: command.defaultModelSelection ?? null,
           faviconPath: null,
+          contextRoot: command.contextRoot ?? null,
           scripts: [],
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
@@ -265,7 +274,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "project.meta.update": {
-      yield* requireProject({
+      const project = yield* requireProject({
         readModel,
         command,
         projectId: command.projectId,
@@ -277,6 +286,18 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           workspaceRoot: command.workspaceRoot,
           exceptProjectId: command.projectId,
         });
+      }
+      // Either side of the containment can move; check the pair that will be in force.
+      if (command.workspaceRoot !== undefined || command.contextRoot !== undefined) {
+        const effectiveContextRoot =
+          command.contextRoot === undefined ? (project.contextRoot ?? null) : command.contextRoot;
+        if (effectiveContextRoot !== null) {
+          yield* requireContextRootContainsWorkspaceRoot({
+            command,
+            workspaceRoot: command.workspaceRoot ?? project.workspaceRoot,
+            contextRoot: effectiveContextRoot,
+          });
+        }
       }
       const occurredAt = yield* nowIso;
       return {
@@ -298,6 +319,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             ? { defaultThreadEnvMode: command.defaultThreadEnvMode }
             : {}),
           ...(command.faviconPath !== undefined ? { faviconPath: command.faviconPath } : {}),
+          ...(command.contextRoot !== undefined ? { contextRoot: command.contextRoot } : {}),
           ...(command.scripts !== undefined ? { scripts: command.scripts } : {}),
           updatedAt: occurredAt,
         },

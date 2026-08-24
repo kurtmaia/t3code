@@ -46,6 +46,8 @@ import {
   type ServerSelfUpdateProgressEvent,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
+  type FilesystemDiscoverRepositoriesFailure,
+  FilesystemDiscoverRepositoriesError,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   RpcClientId,
@@ -201,6 +203,19 @@ function projectEntriesFailureContext(error: WorkspaceEntries.WorkspaceEntriesEr
         normalizedCwd: error.cwd,
         detail: error.reason,
       };
+    default:
+      return unexpectedCompatibilityError(error);
+  }
+}
+
+function filesystemDiscoverRepositoriesFailure(
+  error: WorkspaceEntries.WorkspaceEntriesDiscoverRepositoriesError,
+): { readonly failure: FilesystemDiscoverRepositoriesFailure; readonly platform?: string } {
+  switch (error._tag) {
+    case "WorkspaceEntriesWindowsPathUnsupportedError":
+      return { failure: "windows_path_unsupported", platform: error.platform };
+    case "WorkspaceEntriesReadDirectoryError":
+      return { failure: "read_directory_failed" };
     default:
       return unexpectedCompatibilityError(error);
   }
@@ -1889,6 +1904,21 @@ const makeWsRpcLayer = (
                   new FilesystemBrowseError({
                     ...input,
                     ...filesystemBrowseFailureContext(cause),
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.filesystemDiscoverRepositories]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.filesystemDiscoverRepositories,
+            workspaceEntries.discoverRepositories(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new FilesystemDiscoverRepositoriesError({
+                    path: input.path,
+                    ...filesystemDiscoverRepositoriesFailure(cause),
                     cause,
                   }),
               ),

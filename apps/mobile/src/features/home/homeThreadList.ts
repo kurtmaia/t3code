@@ -13,6 +13,7 @@ import {
   toSortableTimestamp,
 } from "@t3tools/client-runtime/state/thread-sort";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
+import { inferProjectTitleFromPath } from "@t3tools/client-runtime/state/projects";
 import type {
   EnvironmentId,
   ScopedProjectRef,
@@ -32,6 +33,7 @@ export type HomeProjectSortOrder = Exclude<SidebarProjectSortOrder, "manual">;
 export interface HomeProjectScope {
   readonly key: string;
   readonly title: string;
+  readonly groupLabel: string | null;
   readonly representative: EnvironmentProject;
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly projectRefs: ReadonlyArray<ScopedProjectRef>;
@@ -66,6 +68,9 @@ export function buildHomeProjectScopes(input: {
     return {
       key: group.key,
       title: group.label,
+      groupLabel: group.representative.contextRoot
+        ? inferProjectTitleFromPath(group.representative.contextRoot)
+        : null,
       representative: group.representative,
       projects: group.members.map((member) => member.project),
       projectRefs: group.memberProjectRefs,
@@ -146,6 +151,7 @@ const RECENT_THREAD_FALLBACK_COUNT = 3;
 export interface HomeThreadGroup {
   readonly key: string;
   readonly title: string;
+  readonly groupLabel: string | null;
   readonly representative: EnvironmentProject;
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
@@ -358,6 +364,9 @@ export function buildHomeThreadGroups(input: {
     result.push({
       key: group.key,
       title,
+      groupLabel: representative.contextRoot
+        ? inferProjectTitleFromPath(representative.contextRoot)
+        : null,
       representative,
       projects: group.projects,
       pendingTasks: matchingPendingTasks,

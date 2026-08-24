@@ -283,6 +283,8 @@ export function buildProjectCreateCommand(input: {
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
   readonly workspaceRoot: string;
+  readonly contextRoot?: string;
+  readonly createWorkspaceRootIfMissing?: boolean;
   readonly createdAt: string;
 }): Extract<OrchestrationCommand, { type: "project.create" }> {
   return {
@@ -291,7 +293,8 @@ export function buildProjectCreateCommand(input: {
     projectId: input.projectId,
     title: inferProjectTitleFromPath(input.workspaceRoot),
     workspaceRoot: input.workspaceRoot,
-    createWorkspaceRootIfMissing: true,
+    ...(input.contextRoot ? { contextRoot: input.contextRoot } : {}),
+    createWorkspaceRootIfMissing: input.createWorkspaceRootIfMissing ?? true,
     defaultModelSelection: null,
     createdAt: input.createdAt,
   };

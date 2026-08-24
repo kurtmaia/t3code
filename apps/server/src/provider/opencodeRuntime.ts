@@ -342,11 +342,21 @@ export function toOpenCodeFileParts(input: {
   return parts;
 }
 
-export function buildOpenCodePermissionRules(runtimeMode: RuntimeMode): PermissionRuleset {
+/**
+ * OpenCode resolves a ruleset by its last matching rule, which is why the catch-all `ask`
+ * comes first. A context root is appended after the `external_directory` ask so reads under
+ * it go through silently; the bare path is listed beside the glob because a glob with `/**`
+ * does not match the directory itself.
+ */
+export function buildOpenCodePermissionRules(
+  runtimeMode: RuntimeMode,
+  options?: { readonly contextRoot?: string | undefined },
+): PermissionRuleset {
   if (runtimeMode === "full-access") {
     return [{ permission: "*", pattern: "*", action: "allow" }];
   }
 
+  const contextRoot = options?.contextRoot?.replace(/[\\/]+$/u, "");
   return [
     { permission: "*", pattern: "*", action: "ask" },
     { permission: "bash", pattern: "*", action: "ask" },
@@ -355,6 +365,16 @@ export function buildOpenCodePermissionRules(runtimeMode: RuntimeMode): Permissi
     { permission: "websearch", pattern: "*", action: "ask" },
     { permission: "codesearch", pattern: "*", action: "ask" },
     { permission: "external_directory", pattern: "*", action: "ask" },
+    ...(contextRoot
+      ? [
+          { permission: "external_directory", pattern: contextRoot, action: "allow" as const },
+          {
+            permission: "external_directory",
+            pattern: `${contextRoot}/**`,
+            action: "allow" as const,
+          },
+        ]
+      : []),
     { permission: "doom_loop", pattern: "*", action: "ask" },
     { permission: "question", pattern: "*", action: "allow" },
   ];

@@ -4,6 +4,7 @@ import {
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
 import { filterFilesystemBrowseEntries } from "@t3tools/client-runtime/state/filesystem";
+import { inferProjectTitleFromPath } from "@t3tools/client-runtime/state/projects";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
@@ -151,18 +152,30 @@ export function buildProjectActionItems(input: {
   renderDescription?: (project: Project) => ReactNode;
   shortcutCommand?: KeybindingCommand;
 }): CommandPaletteActionItem[] {
-  return input.projects.map((project) => ({
-    kind: "action",
-    value: `${input.valuePrefix}:${project.environmentId}:${project.id}`,
-    searchTerms: [project.title, project.workspaceRoot, ...(input.searchTerms?.(project) ?? [])],
-    title: project.title,
-    description: input.renderDescription?.(project) ?? project.workspaceRoot,
-    icon: input.icon(project),
-    ...(input.shortcutCommand !== undefined ? { shortcutCommand: input.shortcutCommand } : {}),
-    run: async () => {
-      await input.runProject(project);
-    },
-  }));
+  return input.projects.map((project) => {
+    const contextLabel = project.contextRoot
+      ? inferProjectTitleFromPath(project.contextRoot)
+      : null;
+    return {
+      kind: "action",
+      value: `${input.valuePrefix}:${project.environmentId}:${project.id}`,
+      searchTerms: [
+        project.title,
+        project.workspaceRoot,
+        ...(contextLabel ? [contextLabel] : []),
+        ...(input.searchTerms?.(project) ?? []),
+      ],
+      title: project.title,
+      description:
+        input.renderDescription?.(project) ??
+        (contextLabel ? `${contextLabel} / ${project.workspaceRoot}` : project.workspaceRoot),
+      icon: input.icon(project),
+      ...(input.shortcutCommand !== undefined ? { shortcutCommand: input.shortcutCommand } : {}),
+      run: async () => {
+        await input.runProject(project);
+      },
+    };
+  });
 }
 
 export type BuildThreadActionItemsThread = Pick<

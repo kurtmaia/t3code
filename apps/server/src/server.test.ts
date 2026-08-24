@@ -4876,6 +4876,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               cwd: workspaceDir,
               partialPath: "./missing-browse/child",
             }).pipe(Effect.result),
+            discover: client[WS_METHODS.filesystemDiscoverRepositories]({
+              path: missingBrowseParent,
+            }).pipe(Effect.result),
           }),
         ),
       );
@@ -4944,6 +4947,21 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(browseError.failure, "read_directory_failed");
       assert.equal(browseError.parentPath, missingBrowseParent);
       assert.isDefined(browseError.cause);
+
+      if (
+        results.discover._tag !== "Failure" ||
+        results.discover.failure._tag !== "FilesystemDiscoverRepositoriesError"
+      ) {
+        assert.fail("Expected a FilesystemDiscoverRepositoriesError");
+      }
+      const discoverError = results.discover.failure;
+      assert.equal(
+        discoverError.message,
+        `Failed to discover repositories under '${missingBrowseParent}'.`,
+      );
+      assert.equal(discoverError.path, missingBrowseParent);
+      assert.equal(discoverError.failure, "read_directory_failed");
+      assert.isDefined(discoverError.cause);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

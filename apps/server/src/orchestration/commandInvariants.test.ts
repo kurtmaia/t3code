@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import {
   findThreadById,
   listThreadsByProjectId,
+  requireContextRootContainsWorkspaceRoot,
   requireThread,
   requireThreadAbsent,
 } from "./commandInvariants.ts";
@@ -199,5 +200,38 @@ describe("commandInvariants", () => {
         }),
       ),
     ).rejects.toThrow("already exists");
+  });
+
+  describe("requireContextRootContainsWorkspaceRoot", () => {
+    const contains = (workspaceRoot: string, contextRoot: string) =>
+      Effect.runPromise(
+        requireContextRootContainsWorkspaceRoot({
+          command: messageSendCommand,
+          workspaceRoot,
+          contextRoot,
+        }).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        ),
+      );
+
+    it("accepts an ancestor, the root itself, and trailing separators", async () => {
+      expect(await contains("/work/freight/nam-freight-model", "/work/freight")).toBe(true);
+      expect(await contains("/work/freight", "/work/freight")).toBe(true);
+      expect(await contains("/work/freight/", "/work/freight/")).toBe(true);
+      expect(await contains("/work/freight/a/b/c", "/work")).toBe(true);
+    });
+
+    it("rejects siblings and prefix look-alikes", async () => {
+      expect(await contains("/work/pricing/api", "/work/freight")).toBe(false);
+      // `/a/bc` starts with `/a/b` as a string but is not inside it as a path.
+      expect(await contains("/work/freight-archive", "/work/freight")).toBe(false);
+      expect(await contains("/work", "/work/freight")).toBe(false);
+    });
+
+    it("compares Windows paths case-insensitively with backslashes", async () => {
+      expect(await contains("C:\\Work\\Freight\\model", "c:/work/freight")).toBe(true);
+      expect(await contains("C:\\Work\\Pricing", "C:\\Work\\Freight")).toBe(false);
+    });
   });
 });

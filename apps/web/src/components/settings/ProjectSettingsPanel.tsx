@@ -61,6 +61,10 @@ import {
 } from "../../providerInstances";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
+  inferProjectTitleFromPath,
+  normalizeProjectPathForComparison,
+} from "@t3tools/client-runtime/state/projects";
+import {
   buildSidebarProjectSnapshots,
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
@@ -212,7 +216,9 @@ function ProjectSettingsBreadcrumb({ projectKey }: { projectKey: string }) {
     const rect = event.currentTarget.getBoundingClientRect();
     const items: ContextMenuItem<string>[] = groups.map((group) => ({
       id: group.projectKey,
-      label: group.displayName,
+      label: group.contextRoot
+        ? `${inferProjectTitleFromPath(group.contextRoot)} / ${group.displayName}`
+        : group.displayName,
     }));
     void settlePromise(() =>
       api.contextMenu.show(items, { x: rect.left, y: rect.bottom + 4 }),
@@ -367,10 +373,12 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         defaultModelSelection: ModelSelection | null;
         defaultThreadEnvMode: ThreadEnvMode | null;
         faviconPath: string | null;
+        contextRoot: string | null;
       }>,
       failureTitle: string,
+      options?: { readonly members?: ReadonlyArray<SidebarProjectGroupMember> },
     ): Promise<AtomCommandResult<void, unknown>> => {
-      for (const member of group.memberProjects) {
+      for (const member of options?.members ?? group.memberProjects) {
         const result = mapAtomCommandResult(
           await updateProject({
             environmentId: member.environmentId,
@@ -460,6 +468,40 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
       }
     },
     [updateAllMembers],
+  );
+
+  // ----- context root -----
+  const storedContextRoot = representative.contextRoot ?? null;
+  const contextRootLabel =
+    storedContextRoot === null ? null : inferProjectTitleFromPath(storedContextRoot);
+  const setContextRoot = useCallback(
+    (rawContextRoot: string | null) => {
+      const contextRoot = rawContextRoot?.trim() || null;
+      if (contextRoot === storedContextRoot) return;
+      // A group can span machines, and a folder on this one means nothing on another: only
+      // the checkouts that actually sit under the path take the write. Clearing reaches all.
+      const members =
+        contextRoot === null
+          ? group.memberProjects
+          : group.memberProjects.filter((member) => {
+              const root = normalizeProjectPathForComparison(member.workspaceRoot);
+              const context = normalizeProjectPathForComparison(contextRoot);
+              const separator = context.includes("\\") ? "\\" : "/";
+              return root === context || root.startsWith(`${context}${separator}`);
+            });
+      if (members.length === 0) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to update context root",
+            description: "The context root must be a folder that contains this project.",
+          }),
+        );
+        return;
+      }
+      void updateAllMembers({ contextRoot }, "Failed to update context root", { members });
+    },
+    [group.memberProjects, storedContextRoot, updateAllMembers],
   );
 
   // ----- checkout selection and scripts -----
@@ -810,6 +852,33 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                   Choose file
                 </Button>
               </div>
+            }
+          />
+          <SettingsRow
+            title="Context root"
+            description={
+              contextRootLabel
+                ? `Grouped under "${contextRootLabel}". Agents in this project can also read that folder.`
+                : "A parent folder this project belongs to. Repositories that share one are grouped under its name, and agents in them can read it."
+            }
+            resetAction={
+              storedContextRoot !== null ? (
+                <SettingResetButton label="context root" onClick={() => setContextRoot(null)} />
+              ) : null
+            }
+            control={
+              <Input
+                key={`${group.projectKey}:${storedContextRoot ?? ""}`}
+                className="w-full sm:w-64"
+                aria-label="Context root"
+                placeholder="/path/to/parent-folder"
+                defaultValue={storedContextRoot ?? ""}
+                spellCheck={false}
+                onBlur={(event) => setContextRoot(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") event.currentTarget.blur();
+                }}
+              />
             }
           />
         </SettingsSection>

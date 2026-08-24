@@ -9,9 +9,12 @@ import * as Path from "effect/Path";
 import * as RcMap from "effect/RcMap";
 import * as Schema from "effect/Schema";
 
+import { isGitRepository } from "../git/Utils.ts";
 import type {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
+  FilesystemDiscoverRepositoriesInput,
+  FilesystemDiscoverRepositoriesResult,
   ProjectListEntriesInput,
   ProjectListEntriesResult,
   ProjectSearchContentsInput,
@@ -73,6 +76,13 @@ export const WorkspaceEntriesBrowseError = Schema.Union([
 ]);
 export type WorkspaceEntriesBrowseError = typeof WorkspaceEntriesBrowseError.Type;
 
+export const WorkspaceEntriesDiscoverRepositoriesError = Schema.Union([
+  WorkspaceEntriesWindowsPathUnsupportedError,
+  WorkspaceEntriesReadDirectoryError,
+]);
+export type WorkspaceEntriesDiscoverRepositoriesError =
+  typeof WorkspaceEntriesDiscoverRepositoriesError.Type;
+
 export const WorkspaceEntriesError = Schema.Union([
   WorkspacePaths.WorkspaceRootNotExistsError,
   WorkspacePaths.WorkspaceRootCreateFailedError,
@@ -90,6 +100,12 @@ export class WorkspaceEntries extends Context.Service<
     readonly browse: (
       input: FilesystemBrowseInput,
     ) => Effect.Effect<FilesystemBrowseResult, WorkspaceEntriesBrowseError>;
+    readonly discoverRepositories: (
+      input: FilesystemDiscoverRepositoriesInput,
+    ) => Effect.Effect<
+      FilesystemDiscoverRepositoriesResult,
+      WorkspaceEntriesDiscoverRepositoriesError
+    >;
     readonly list: (
       input: ProjectListEntriesInput,
     ) => Effect.Effect<ProjectListEntriesResult, WorkspaceEntriesError>;
@@ -111,6 +127,12 @@ function expandHomePath(input: string, path: Path.Path): string {
     return path.join(NodeOS.homedir(), input.slice(2));
   }
   return input;
+}
+
+function isSkippedDiscoveryDirectory(name: string): boolean {
+  return (
+    name.startsWith(".") || name === "node_modules" || name === "venv" || name.startsWith(".venv")
+  );
 }
 
 const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(function* (
@@ -237,6 +259,57 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  /**
+   * Direct children only: a folder of repositories is one level deep by construction, and
+   * recursing would make "which parent is the context root" ambiguous. Hidden folders and
+   * dependency caches are skipped because they are never a repository someone means to add.
+   */
+  const discoverRepositories: WorkspaceEntries["Service"]["discoverRepositories"] = Effect.fn(
+    "WorkspaceEntries.discoverRepositories",
+  )(function* (input) {
+    const platform = yield* HostProcessPlatform;
+    if (platform !== "win32" && isWindowsAbsolutePath(input.path)) {
+      return yield* new WorkspaceEntriesWindowsPathUnsupportedError({
+        partialPath: input.path,
+        platform,
+      });
+    }
+    const resolved = path.resolve(expandHomePath(input.path, path));
+
+    const dirents = yield* Effect.tryPromise({
+      try: () => NodeFSP.readdir(resolved, { withFileTypes: true }),
+      catch: (cause) =>
+        new WorkspaceEntriesReadDirectoryError({
+          partialPath: input.path,
+          parentPath: resolved,
+          cause,
+        }),
+    }).pipe(
+      Effect.catchIf(
+        (error) => {
+          const code = (error.cause as NodeJS.ErrnoException | undefined)?.code;
+          return code === "EACCES" || code === "EPERM";
+        },
+        () => Effect.succeed([]),
+      ),
+    );
+
+    const repositories: Array<{ readonly name: string; readonly path: string }> = [];
+    for (const dirent of dirents) {
+      if (!dirent.isDirectory() || isSkippedDiscoveryDirectory(dirent.name)) continue;
+      const childPath = path.join(resolved, dirent.name);
+      if (isGitRepository(childPath)) {
+        repositories.push({ name: dirent.name, path: childPath });
+      }
+    }
+
+    return {
+      path: resolved,
+      isRepository: isGitRepository(resolved),
+      repositories: repositories.toSorted((left, right) => left.name.localeCompare(right.name)),
+    };
+  });
+
   const search: WorkspaceEntries["Service"]["search"] = Effect.fn("WorkspaceEntries.search")(
     function* (input) {
       const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
@@ -288,7 +361,14 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  return WorkspaceEntries.of({ browse, list, refresh, search, searchContents });
+  return WorkspaceEntries.of({
+    browse,
+    discoverRepositories,
+    list,
+    refresh,
+    search,
+    searchContents,
+  });
 });
 
 export const layer = Layer.effect(WorkspaceEntries, make).pipe(

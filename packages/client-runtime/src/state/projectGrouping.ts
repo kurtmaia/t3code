@@ -7,7 +7,7 @@ import type {
 import type { ClientSettings } from "@t3tools/contracts/settings";
 
 import type { EnvironmentProject } from "./models.ts";
-import { normalizeProjectPathForComparison } from "./projects.ts";
+import { inferProjectTitleFromPath, normalizeProjectPathForComparison } from "./projects.ts";
 
 export interface ProjectGroupingSettings {
   readonly sidebarProjectGroupingMode: SidebarProjectGroupingMode;
@@ -332,4 +332,71 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
       memberProjectRefs: projectRefsByLogicalKey.get(key) ?? [],
     };
   });
+}
+
+/**
+ * A run of items that share a context root, labeled by that folder's name. `key`, `label` and
+ * `contextRoot` are null for the one section holding items with no context root.
+ */
+export interface ContextRootSection<T> {
+  readonly key: string | null;
+  readonly label: string | null;
+  readonly contextRoot: string | null;
+  readonly items: ReadonlyArray<T>;
+}
+
+/**
+ * Buckets already-sorted items by context root, in order of first appearance so the caller's
+ * ordering survives. Within a section the folder that stands for the group (its workspace root
+ * is the context root) comes first; the rest keep their order. Orthogonal to
+ * {@link buildProjectGroups}: that merges one repository seen from several places, this
+ * gathers several repositories that live in one folder, so it takes a selector rather than a
+ * project shape and runs over whatever the caller already has.
+ */
+export function groupByContextRoot<T>(
+  items: ReadonlyArray<T>,
+  select: (item: T) => Pick<EnvironmentProject, "workspaceRoot" | "contextRoot">,
+): ReadonlyArray<ContextRootSection<T>> {
+  const sections: Array<{
+    readonly key: string | null;
+    readonly label: string | null;
+    readonly contextRoot: string | null;
+    root: T | null;
+    readonly rest: T[];
+  }> = [];
+  const sectionsByKey = new Map<string | null, (typeof sections)[number]>();
+
+  for (const item of items) {
+    const project = select(item);
+    const contextRoot = project.contextRoot?.trim() || null;
+    const key = contextRoot === null ? null : normalizeProjectPathForComparison(contextRoot);
+    let section = sectionsByKey.get(key);
+    if (section === undefined) {
+      section = {
+        key,
+        label: contextRoot === null ? null : inferProjectTitleFromPath(contextRoot),
+        contextRoot,
+        root: null,
+        rest: [],
+      };
+      sectionsByKey.set(key, section);
+      sections.push(section);
+    }
+    if (
+      key !== null &&
+      section.root === null &&
+      normalizeProjectPathForComparison(project.workspaceRoot) === key
+    ) {
+      section.root = item;
+    } else {
+      section.rest.push(item);
+    }
+  }
+
+  return sections.map((section) => ({
+    key: section.key,
+    label: section.label,
+    contextRoot: section.contextRoot,
+    items: section.root === null ? section.rest : [section.root, ...section.rest],
+  }));
 }
