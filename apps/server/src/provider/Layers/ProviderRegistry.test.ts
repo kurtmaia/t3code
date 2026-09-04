@@ -1,3 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
@@ -336,26 +341,40 @@ function makeMutableServerSettingsService(
   });
 }
 
+/**
+ * Provider snapshots layer in the shared cross-provider skill catalog, which
+ * resolves its user scope from `CLAUDE_CONFIG_DIR` and otherwise from the real
+ * home directory. Point it at an empty directory so a maintainer's own
+ * `~/.claude/skills` cannot answer these assertions.
+ */
+const ISOLATED_SKILLS_ENVIRONMENT: NodeJS.ProcessEnv = {
+  ...process.env,
+  CLAUDE_CONFIG_DIR: NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-provider-skills-")),
+};
+
 it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), TestHttpClientLive))(
   "ProviderRegistry",
   (it) => {
     describe("checkCodexProviderStatus", () => {
       it.effect("uses the app-server account and model list for provider status", () =>
         Effect.gen(function* () {
-          const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
-            Effect.succeed(
-              makeCodexProbeSnapshot({
-                skills: [
-                  {
-                    name: "github:gh-fix-ci",
-                    path: "/Users/test/.codex/skills/gh-fix-ci/SKILL.md",
-                    enabled: true,
-                    displayName: "CI Debug",
-                    shortDescription: "Debug failing GitHub Actions checks",
-                  },
-                ],
-              }),
-            ),
+          const status = yield* checkCodexProviderStatus(
+            defaultCodexSettings,
+            () =>
+              Effect.succeed(
+                makeCodexProbeSnapshot({
+                  skills: [
+                    {
+                      name: "github:gh-fix-ci",
+                      path: "/Users/test/.codex/skills/gh-fix-ci/SKILL.md",
+                      enabled: true,
+                      displayName: "CI Debug",
+                      shortDescription: "Debug failing GitHub Actions checks",
+                    },
+                  ],
+                }),
+              ),
+            ISOLATED_SKILLS_ENVIRONMENT,
           );
           assert.strictEqual(status.status, "ready");
           assert.strictEqual(status.installed, true);
@@ -1740,6 +1759,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 "claudeAgent",
                 "codex",
                 "cursor",
+                "githubCopilot",
                 "grok",
                 "opencode",
               ]);

@@ -25,6 +25,7 @@ import {
 import {
   applyCursorAcpModelSelection,
   makeCursorAcpRuntime,
+  type CursorAcpRuntimeInput,
 } from "../provider/acp/CursorAcpSupport.ts";
 
 const CURSOR_TIMEOUT_MS = 180_000;
@@ -36,8 +37,13 @@ const isTextGenerationError = Schema.is(TextGenerationError);
  * payload. See `makeCodexAdapter` for the overall per-instance rationale.
  */
 export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(function* (
-  cursorSettings: CursorSettings,
+  cursorSettings: Pick<CursorSettings, "binaryPath"> & Partial<Pick<CursorSettings, "apiEndpoint">>,
   environment?: NodeJS.ProcessEnv,
+  options?: {
+    readonly makeAcpRuntime?: (
+      input: CursorAcpRuntimeInput,
+    ) => ReturnType<typeof makeCursorAcpRuntime>;
+  },
 ) {
   const crypto = yield* Crypto.Crypto;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -62,7 +68,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
     Effect.gen(function* () {
       const outputRef = yield* Ref.make("");
-      const runtime = yield* makeCursorAcpRuntime({
+      const runtime = yield* (options?.makeAcpRuntime ?? makeCursorAcpRuntime)({
         cursorSettings,
         environment: resolvedEnvironment,
         childProcessSpawner: commandSpawner,
