@@ -1,5 +1,9 @@
 import * as Effect from "effect/Effect";
-import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
+import type {
+  PullRequestCapabilities,
+  PullRequestComment,
+  PullRequestViewerPermissions,
+} from "@t3tools/contracts";
 
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import {
@@ -177,12 +181,26 @@ export const make = Effect.gen(function* () {
       cli.getPullRequest({ cwd: input.cwd, number: input.number }).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
         Effect.flatMap((pullRequest) =>
-          (pullRequest.threadsUrl === null
-            ? Effect.succeed({ comments: [], truncated: true })
-            : cli.listThreads({ cwd: input.cwd, threadsUrl: pullRequest.threadsUrl }).pipe(
-                Effect.map((comments) => ({ comments, truncated: false })),
-                Effect.orElseSucceed(() => ({ comments: [], truncated: true })),
-              )
+          // A pull request Azure named no project or repository for has nowhere to ask, which is
+          // a conversation nobody can see the whole of rather than one that failed.
+          (pullRequest.threadsRoute === null
+            ? Effect.succeed<{
+                readonly comments: ReadonlyArray<PullRequestComment>;
+                readonly truncated: boolean;
+              }>({ comments: [], truncated: true })
+            : cli
+                .listThreads({
+                  cwd: input.cwd,
+                  project: pullRequest.threadsRoute.project,
+                  repository: pullRequest.threadsRoute.repository,
+                  number: input.number,
+                })
+                .pipe(
+                  // Reported rather than swallowed: a page that shows no comments where the read
+                  // failed is a page stating there are none, which is a different thing.
+                  Effect.mapError(fail("getChangeRequestActivity")),
+                  Effect.map((comments) => ({ comments, truncated: false })),
+                )
           ).pipe(
             Effect.map(
               (conversation): ProviderChangeRequestActivity => ({

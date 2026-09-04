@@ -117,7 +117,10 @@ export type AzureDevOpsPullRequestCliError =
   | AzureDevOpsReviewerNameError
   | AzureDevOpsViewerUnavailableError;
 
-/** The version every REST call below is pinned to, so a new default cannot reshape a response. */
+/**
+ * The version every REST call below is pinned to, so a new default cannot reshape a response.
+ * `az devops invoke` defaults to 5.0, which is old enough to matter.
+ */
 const REST_API_VERSION = "7.1";
 
 export class AzureDevOpsPullRequestCli extends Context.Service<
@@ -154,10 +157,21 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly number: number;
     }) => Effect.Effect<AzureDevOpsPullRequest, AzureDevOpsPullRequestCliError>;
 
-    /** Threads are not reachable through `az repos pr`, so they come from the REST API. */
+    /**
+     * Threads are not reachable through `az repos pr`, so they come from the REST API — asked for
+     * through `az devops invoke`, which carries the same sign-in the rest of these commands use.
+     *
+     * `az rest` cannot do it. It attaches a bearer token only for a URL it recognises as one of
+     * Azure's own endpoints, and dev.azure.com is not among them, so the request leaves with no
+     * `Authorization` header at all. Azure DevOps answers an anonymous read with its sign-in page
+     * and a successful status, which is HTML on a zero exit: a conversation that reads as empty
+     * rather than as refused.
+     */
     readonly listThreads: (input: {
       readonly cwd: string;
-      readonly threadsUrl: string;
+      readonly project: string;
+      readonly repository: string;
+      readonly number: number;
     }) => Effect.Effect<ReadonlyArray<PullRequestComment>, AzureDevOpsPullRequestCliError>;
 
     readonly runPullRequestAction: (input: {
@@ -466,11 +480,23 @@ export const make = Effect.gen(function* () {
       executeJson({
         cwd: input.cwd,
         args: [
-          "rest",
-          "--method",
-          "get",
-          "--url",
-          `${input.threadsUrl}?api-version=${REST_API_VERSION}`,
+          "devops",
+          "invoke",
+          ...detectArgs,
+          "--area",
+          "git",
+          "--resource",
+          "pullRequestThreads",
+          "--api-version",
+          REST_API_VERSION,
+          // Named rather than routed by url, so the organization comes from the checkout and an
+          // on-premises collection is reached by the same call as a hosted organization. Azure
+          // allows none of `=`, `/` or `:` in a project or repository name, so a name cannot
+          // break out of the `key=value` a route parameter is read as.
+          "--route-parameters",
+          `project=${input.project}`,
+          `repositoryId=${input.repository}`,
+          `pullRequestId=${input.number}`,
         ],
       }).pipe(
         Effect.flatMap((result) => {
