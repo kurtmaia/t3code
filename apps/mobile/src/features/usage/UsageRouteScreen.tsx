@@ -1,5 +1,10 @@
 import { useNavigation } from "@react-navigation/native";
-import type { UsageProviderQuota } from "@t3tools/contracts";
+import {
+  isIsoResetDate,
+  quotaProviderLabel,
+  quotaWindowLabel,
+  selectQuotaPerProvider,
+} from "@t3tools/shared/usageQuotaPresentation";
 import type { DailyTotals, MergedUsage } from "@t3tools/shared/usageMerge";
 import {
   enumerateDays,
@@ -409,11 +414,13 @@ function TotalsSection(props: { readonly merged: MergedUsage; readonly isPast24H
 function ProviderQuotasSection(props: {
   readonly environments: readonly EnvironmentUsageStatus[];
 }) {
-  const reports = selectQuotaPerProvider(props.environments);
+  const reports = selectQuotaPerProvider(
+    props.environments.map((environment) => environment.summary?.providerQuotas),
+  );
   const providerColors = useProviderColors();
   if (reports.length === 0) return null;
   return (
-    <SettingsSection title="Quota remaining · one per provider" card>
+    <SettingsSection title="Quota remaining · tightest window per provider" card>
       {reports.map((quota) => (
         <View
           key={quota.provider}
@@ -459,59 +466,8 @@ function ProviderQuotasSection(props: {
   );
 }
 
-const QUOTA_PROVIDER_ORDER = ["claude", "codex", "copilot"] as const;
-
-function selectQuotaPerProvider(environments: readonly EnvironmentUsageStatus[]) {
-  const selected = new Map<UsageProviderQuota["provider"], UsageProviderQuota>();
-  for (const environment of environments) {
-    for (const quota of environment.summary?.providerQuotas ?? []) {
-      const current = selected.get(quota.provider);
-      if (!current || quotaPriority(quota) < quotaPriority(current)) {
-        selected.set(quota.provider, quota);
-      }
-    }
-  }
-  return QUOTA_PROVIDER_ORDER.flatMap((provider) => {
-    const quota = selected.get(provider);
-    return quota ? [quota] : [];
-  });
-}
-
-function quotaPriority(quota: UsageProviderQuota) {
-  if (quota.status === "unavailable") return 100;
-  if (quota.provider === "claude") {
-    return quota.window.toLowerCase() === "session"
-      ? 0
-      : quota.window.toLowerCase().startsWith("week")
-        ? 1
-        : 2;
-  }
-  if (quota.provider === "codex") {
-    return quota.window.toLowerCase().startsWith("current") ? 0 : 1;
-  }
-  return 0;
-}
-
-function quotaProviderLabel(provider: UsageProviderQuota["provider"]) {
-  return provider === "claude" ? "Claude Code" : provider === "codex" ? "Codex" : "GitHub Copilot";
-}
-
-function quotaWindowLabel(quota: UsageProviderQuota) {
-  // An unavailable quota carries a placeholder window, not one the provider
-  // named, so it must not be relabelled as a window we never read.
-  if (quota.status === "unavailable") return quota.window;
-  if (quota.provider === "claude") {
-    return quota.window.toLowerCase() === "session" ? "Current session" : "Weekly quota";
-  }
-  if (quota.provider === "codex") return quota.window;
-  return quota.window;
-}
-
 function formatQuotaReset(resetDate: string) {
-  if (/^\d{4}-\d{2}-\d{2}T/.test(resetDate)) {
-    return resetDate.slice(0, 10);
-  }
-  return resetDate;
+  return isIsoResetDate(resetDate) ? resetDate.slice(0, 10) : resetDate;
 }
 
 function MetricCell(props: {

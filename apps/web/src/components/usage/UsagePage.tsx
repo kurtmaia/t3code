@@ -1,4 +1,10 @@
 import type { UsageProviderKind, UsageProviderQuota } from "@t3tools/contracts";
+import {
+  isIsoResetDate,
+  quotaProviderLabel,
+  quotaWindowLabel,
+  selectQuotaPerProvider,
+} from "@t3tools/shared/usageQuotaPresentation";
 import { CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -526,13 +532,15 @@ function UsageProviderQuotas({
 }: {
   readonly environments: readonly EnvironmentUsageStatus[];
 }) {
-  const reports = selectQuotaPerProvider(environments);
+  const reports = selectQuotaPerProvider(
+    environments.map((environment) => environment.summary?.providerQuotas),
+  );
   if (reports.length === 0) return null;
   return (
     <section className="flex flex-col gap-2 border-y border-border py-3">
       <div className="flex items-baseline justify-between gap-3">
         <h2 className="text-sm font-medium text-foreground">Quota remaining</h2>
-        <span className="text-xs text-muted-foreground">One window per provider</span>
+        <span className="text-xs text-muted-foreground">Tightest window per provider</span>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {reports.map((quota) => (
@@ -577,63 +585,13 @@ function UsageProviderQuotas({
   );
 }
 
-const QUOTA_PROVIDER_ORDER = ["claude", "codex", "copilot"] as const;
-
-function selectQuotaPerProvider(environments: readonly EnvironmentUsageStatus[]) {
-  const selected = new Map<UsageProviderQuota["provider"], UsageProviderQuota>();
-  for (const environment of environments) {
-    for (const quota of environment.summary?.providerQuotas ?? []) {
-      const current = selected.get(quota.provider);
-      if (!current || quotaPriority(quota) < quotaPriority(current)) {
-        selected.set(quota.provider, quota);
-      }
-    }
-  }
-  return QUOTA_PROVIDER_ORDER.flatMap((provider) => {
-    const quota = selected.get(provider);
-    return quota ? [quota] : [];
-  });
-}
-
-function quotaPriority(quota: UsageProviderQuota) {
-  if (quota.status === "unavailable") return 100;
-  if (quota.provider === "claude") {
-    return quota.window.toLowerCase() === "session"
-      ? 0
-      : quota.window.toLowerCase().startsWith("week")
-        ? 1
-        : 2;
-  }
-  if (quota.provider === "codex") {
-    return quota.window.toLowerCase().startsWith("current") ? 0 : 1;
-  }
-  return 0;
-}
-
-function quotaProviderLabel(provider: UsageProviderQuota["provider"]) {
-  return provider === "claude" ? "Claude Code" : provider === "codex" ? "Codex" : "GitHub Copilot";
-}
-
-function quotaWindowLabel(quota: UsageProviderQuota) {
-  // An unavailable quota carries a placeholder window, not one the provider
-  // named, so it must not be relabelled as a window we never read.
-  if (quota.status === "unavailable") return quota.window;
-  if (quota.provider === "claude") {
-    return quota.window.toLowerCase() === "session" ? "Current session" : "Weekly quota";
-  }
-  if (quota.provider === "codex") return quota.window;
-  return quota.window;
-}
-
+/** Provider accents stay per-surface: web reads CSS variables mobile has no access to. */
 function quotaProviderColor(provider: UsageProviderQuota["provider"]) {
   return provider === "claude" ? "#d97757" : provider === "codex" ? "var(--foreground)" : "#10b981";
 }
 
 function formatQuotaReset(resetDate: string) {
-  if (/^\d{4}-\d{2}-\d{2}T/.test(resetDate)) {
-    return formatDayShort(resetDate.slice(0, 10));
-  }
-  return resetDate;
+  return isIsoResetDate(resetDate) ? formatDayShort(resetDate.slice(0, 10)) : resetDate;
 }
 
 /**
