@@ -53,6 +53,7 @@ import {
 } from "../acp/AcpCoreRuntimeEvents.ts";
 import { parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
+import { formatResolvedSkillsPromptText } from "../resolvedSkillInstructions.ts";
 import {
   applyGrokAcpModelSelection,
   currentGrokModelIdFromSessionSetup,
@@ -991,6 +992,14 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   }),
               );
               const promptParts: Array<EffectAcpSchema.ContentBlock> = [
+                ...(input.resolvedSkills?.length
+                  ? [
+                      {
+                        type: "text" as const,
+                        text: formatResolvedSkillsPromptText(input.resolvedSkills),
+                      },
+                    ]
+                  : []),
                 ...(text ? [{ type: "text" as const, text }] : []),
                 ...imagePromptParts,
               ];

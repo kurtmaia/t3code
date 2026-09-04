@@ -175,9 +175,39 @@ export interface CodexRuntimeInfo {
   readonly reasoningEffort: string;
 }
 
+export interface CodexResolvedSkill {
+  readonly name: string;
+  readonly instructions: string;
+}
+
 // Values come from trusted config, but keep the block single-line regardless.
 function toSingleLine(value: string): string {
   return value.replaceAll(/\s+/g, " ").trim();
+}
+
+/**
+ * Skills the user referenced with a `$name` token that aren't in this
+ * session's own native skill list — resolved from T3's shared, cross-provider
+ * skill catalog (see `apps/server/src/provider/SharedSkillCatalog.ts`) so a
+ * skill authored for another provider (e.g. Claude's `.claude/skills`) still
+ * works here. Omitted entirely when there's nothing to add.
+ */
+function resolvedSkillInstructionsBlock(
+  resolvedSkills: ReadonlyArray<CodexResolvedSkill> | undefined,
+): string {
+  if (!resolvedSkills || resolvedSkills.length === 0) {
+    return "";
+  }
+  const sections = resolvedSkills
+    .map((skill) => `### ${skill.name}\n\n${skill.instructions}`)
+    .join("\n\n");
+  return `
+
+<supplementary_skill_instructions>
+The user referenced the following skill(s) with a \`$name\` token. They aren't part of this session's own skill catalog, but their instructions are inlined below — follow them for the current turn as you would a native skill.
+
+${sections}
+</supplementary_skill_instructions>`;
 }
 
 export function buildCodexDeveloperInstructions(
@@ -189,6 +219,7 @@ export function buildCodexDeveloperInstructions(
    * setting, so the prompt cannot claim tools the turn doesn't have.
    */
   browserToolsAvailable = true,
+  resolvedSkills?: ReadonlyArray<CodexResolvedSkill>,
 ): string {
   const base =
     interactionMode === "plan"
@@ -196,5 +227,5 @@ export function buildCodexDeveloperInstructions(
       : codexDefaultModeDeveloperInstructions(browserToolsAvailable);
   return `${base}
 
-<runtime_info>In case you're asked: you are running in T3 Code through the Codex harness, as ${toSingleLine(runtime.model)} with ${toSingleLine(runtime.reasoningEffort)} reasoning effort. No need to mention this otherwise.</runtime_info>`;
+<runtime_info>In case you're asked: you are running in T3 Code through the Codex harness, as ${toSingleLine(runtime.model)} with ${toSingleLine(runtime.reasoningEffort)} reasoning effort. No need to mention this otherwise.</runtime_info>${resolvedSkillInstructionsBlock(resolvedSkills)}`;
 }

@@ -138,6 +138,9 @@ const CommandRow = memo(function CommandRow(props: {
           {props.item.description}
         </Text>
       ) : null}
+      {props.item.type === "skill" && props.item.skill.origin === "shared" ? (
+        <Text className="shrink-0 text-3xs italic text-foreground-muted">Shared</Text>
+      ) : null}
     </Pressable>
   );
 });

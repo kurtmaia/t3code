@@ -13,6 +13,8 @@ import {
   ModelSelection,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  PROVIDER_SEND_TURN_MAX_RESOLVED_SKILLS,
+  PROVIDER_SEND_TURN_MAX_SKILL_INSTRUCTIONS_CHARS,
   ProviderApprovalDecision,
   ProviderApprovalPolicy,
   ProviderInteractionMode,
@@ -68,6 +70,20 @@ export const ProviderSessionStartInput = Schema.Struct({
 });
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 
+// A skill resolved from the shared cross-provider filesystem catalog for
+// this turn (see apps/server/src/provider/SharedSkillCatalog.ts), keyed by
+// a `$name` token found in the outgoing message text. Adapters that lack a
+// native skill mechanism fold `instructions` into whatever instructions
+// channel they have; adapters with native skill support ignore entries
+// that collide with a skill they already know natively.
+export const ProviderResolvedSkill = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  instructions: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_SKILL_INSTRUCTIONS_CHARS),
+  ),
+});
+export type ProviderResolvedSkill = typeof ProviderResolvedSkill.Type;
+
 export const ProviderSendTurnInput = Schema.Struct({
   threadId: ThreadId,
   input: Schema.optional(
@@ -78,6 +94,11 @@ export const ProviderSendTurnInput = Schema.Struct({
   ),
   modelSelection: Schema.optional(ModelSelection),
   interactionMode: Schema.optional(ProviderInteractionMode),
+  resolvedSkills: Schema.optional(
+    Schema.Array(ProviderResolvedSkill).check(
+      Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_RESOLVED_SKILLS),
+    ),
+  ),
 });
 export type ProviderSendTurnInput = typeof ProviderSendTurnInput.Type;
 

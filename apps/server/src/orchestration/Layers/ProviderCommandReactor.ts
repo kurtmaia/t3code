@@ -4,14 +4,19 @@ import {
   EventId,
   type ModelSelection,
   type OrchestrationEvent,
+  PROVIDER_SEND_TURN_MAX_RESOLVED_SKILLS,
+  PROVIDER_SEND_TURN_MAX_SKILL_INSTRUCTIONS_CHARS,
   ProviderDriverKind,
   type ProjectId,
   type OrchestrationSession,
   ThreadId,
   type ProviderSession,
+  type ProviderResolvedSkill,
+  type ServerProviderSkill,
   type RuntimeMode,
   type TurnId,
 } from "@t3tools/contracts";
+import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
@@ -19,8 +24,10 @@ import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
@@ -32,6 +39,7 @@ import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import { discoverSharedSkills, readSkillBody } from "../../provider/SharedSkillCatalog.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
@@ -68,6 +76,24 @@ function toNonEmptyProviderInput(value: string | undefined): string | undefined 
   return normalized && normalized.length > 0 ? normalized : undefined;
 }
 
+/**
+ * `$name` tokens referenced in outgoing turn text, deduplicated in
+ * first-seen order. A provider-agnostic parse: the same token grammar the
+ * web/mobile composer already renders as a skill chip.
+ */
+function collectSkillTokenNames(messageText: string): ReadonlyArray<string> {
+  const names: Array<string> = [];
+  const seen = new Set<string>();
+  for (const token of collectComposerInlineTokens(messageText)) {
+    if (token.type !== "skill" || seen.has(token.value)) {
+      continue;
+    }
+    seen.add(token.value);
+    names.push(token.value);
+  }
+  return names;
+}
+
 function mapProviderSessionStatusToOrchestrationStatus(
   status: "connecting" | "ready" | "running" | "error" | "closed",
 ): OrchestrationSession["status"] {
@@ -91,6 +117,15 @@ const turnStartKeyForEvent = (event: ProviderIntentEvent): string =>
 
 const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
+/**
+ * The shared skill catalog is a directory walk that reads and YAML-parses every
+ * `SKILL.md` it finds, and a user config dir holding a few hundred skills is
+ * ordinary. Any `$token` in turn text asks for it, including the `$HOME` kind
+ * that matches nothing, so it is cached per workspace rather than walked on the
+ * send-turn path. A skill added mid-session shows up within the TTL.
+ */
+const SHARED_SKILL_CATALOG_MAX = 64;
+const SHARED_SKILL_CATALOG_TTL = Duration.seconds(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const MAX_REGENERATION_ATTACHMENTS = 4;
 const MAX_THREAD_TITLE_CONTEXT_CHARS = 8_000;
@@ -300,6 +335,8 @@ function buildGeneratedWorktreeBranchName(raw: string): string {
 
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
@@ -315,6 +352,16 @@ const make = Effect.gen(function* () {
     capacity: HANDLED_TURN_START_KEY_MAX,
     timeToLive: HANDLED_TURN_START_KEY_TTL,
     lookup: () => Effect.succeed(true),
+  });
+
+  const sharedSkillCatalogs = yield* Cache.make<string, ReadonlyArray<ServerProviderSkill>>({
+    capacity: SHARED_SKILL_CATALOG_MAX,
+    timeToLive: SHARED_SKILL_CATALOG_TTL,
+    lookup: (cwd: string) =>
+      discoverSharedSkills(cwd || undefined, process.env).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      ),
   });
 
   const hasHandledTurnStartRecently = (key: string) =>
@@ -756,6 +803,9 @@ const make = Effect.gen(function* () {
     }
     const normalizedInput = toNonEmptyProviderInput(input.messageText);
     const normalizedAttachments = input.attachments ?? [];
+    const resolvedSkills = normalizedInput
+      ? yield* resolveSkillReferencesForTurn(thread, normalizedInput)
+      : [];
     const activeSession = yield* providerService
       .listSessions()
       .pipe(
@@ -790,7 +840,56 @@ const make = Effect.gen(function* () {
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      ...(resolvedSkills.length > 0 ? { resolvedSkills } : {}),
     };
+  });
+
+  /**
+   * Resolve `$name` tokens in outgoing turn text against the shared,
+   * cross-provider skill catalog (`SharedSkillCatalog.ts`) so a skill
+   * authored under one provider's convention (e.g. Claude's `.claude/skills`)
+   * can be referenced while running any provider. Attached unconditionally —
+   * whether a given adapter uses this is a per-adapter decision, since only
+   * the adapter knows which skills it already has natively.
+   */
+  const resolveSkillReferencesForTurn = Effect.fnUntraced(function* (
+    thread: { readonly projectId: ProjectId; readonly worktreePath: string | null },
+    messageText: string,
+  ) {
+    const skillNames = collectSkillTokenNames(messageText);
+    if (skillNames.length === 0) {
+      return [];
+    }
+
+    const project = yield* resolveProject(thread.projectId);
+    const effectiveCwd = resolveThreadWorkspaceCwd({
+      thread,
+      projects: project ? [project] : [],
+    });
+    const catalog = yield* Cache.get(sharedSkillCatalogs, effectiveCwd ?? "");
+    const catalogByName = new Map(catalog.map((skill) => [skill.name, skill] as const));
+
+    // Cap what the catalog actually matched, not the raw tokens: `$HOME` and
+    // friends are common in turn text, and letting them spend the budget would
+    // silently drop the real skill that followed them.
+    const matched = skillNames
+      .filter((name) => catalogByName.has(name))
+      .slice(0, PROVIDER_SEND_TURN_MAX_RESOLVED_SKILLS);
+
+    const resolved: Array<ProviderResolvedSkill> = [];
+    for (const name of matched) {
+      const skill = catalogByName.get(name);
+      if (!skill) {
+        continue;
+      }
+      const instructions = (yield* readSkillBody(skill.path).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+      )).slice(0, PROVIDER_SEND_TURN_MAX_SKILL_INSTRUCTIONS_CHARS);
+      if (instructions) {
+        resolved.push({ name, instructions });
+      }
+    }
+    return resolved;
   });
 
   const maybeGenerateAndRenameWorktreeBranchForFirstTurn = Effect.fn(

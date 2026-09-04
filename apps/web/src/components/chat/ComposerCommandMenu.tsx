@@ -8,7 +8,10 @@ import { BotIcon } from "lucide-react";
 import { memo, useLayoutEffect, useMemo, useRef } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
-import { formatProviderSkillInstallSource } from "~/providerSkillPresentation";
+import {
+  formatProviderSkillInstallSource,
+  formatProviderSkillOrigin,
+} from "~/providerSkillPresentation";
 import { cn } from "~/lib/utils";
 import {
   Command,
@@ -208,6 +211,8 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
 }) {
   const skillSourceLabel =
     props.item.type === "skill" ? formatProviderSkillInstallSource(props.item.skill) : null;
+  const skillOriginLabel =
+    props.item.type === "skill" ? formatProviderSkillOrigin(props.item.skill) : null;
 
   return (
     <CommandItem
@@ -253,6 +258,11 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           {props.item.description}
         </span>
       </span>
+      {skillOriginLabel ? (
+        <span className="shrink-0 pl-2 text-secondary-label text-xs italic">
+          {skillOriginLabel}
+        </span>
+      ) : null}
       {skillSourceLabel ? (
         <span className="shrink-0 pl-2 text-secondary-label text-xs">{skillSourceLabel}</span>
       ) : null}

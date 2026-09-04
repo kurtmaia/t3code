@@ -66,6 +66,7 @@ import {
 } from "../acp/AcpRuntimeModel.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import { applyCursorAcpModelSelection, makeCursorAcpRuntime } from "../acp/CursorAcpSupport.ts";
+import { formatResolvedSkillsPromptText } from "../resolvedSkillInstructions.ts";
 import {
   CursorAskQuestionRequest,
   CursorCreatePlanRequest,
@@ -79,7 +80,7 @@ import { resolveCursorAcpBaseModelId } from "./CursorProvider.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 
-const PROVIDER = ProviderDriverKind.make("cursor");
+const DEFAULT_PROVIDER = ProviderDriverKind.make("cursor");
 const CURSOR_RESUME_VERSION = 1 as const;
 const ACP_PLAN_MODE_ALIASES = ["plan", "architect"];
 const ACP_IMPLEMENT_MODE_ALIASES = ["code", "agent", "default", "chat", "implement"];
@@ -90,6 +91,9 @@ function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
   return Exit.isSuccess(result) ? result.value : undefined;
 }
 
+type AcpProviderSettings = Pick<CursorSettings, "binaryPath"> &
+  Partial<Pick<CursorSettings, "apiEndpoint">>;
+
 export interface CursorAdapterLiveOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly nativeEventLogPath?: string;
@@ -99,6 +103,8 @@ export interface CursorAdapterLiveOptions {
    * Defaults to the legacy built-in instance id (`cursor`).
    */
   readonly instanceId?: ProviderInstanceId;
+  /** Provider identity used in emitted events and adapter validation. */
+  readonly provider?: ProviderDriverKind;
   /**
    * Optional per-session settings resolver. When provided the adapter yields
    * this effect at the start of every session and uses the result instead of
@@ -110,7 +116,9 @@ export interface CursorAdapterLiveOptions {
    * swap `binaryPath` to a mock ACP wrapper — pass a resolver that reads
    * the latest snapshot so the closure isn't stale.
    */
-  readonly resolveSettings?: Effect.Effect<CursorSettings>;
+  readonly resolveSettings?: Effect.Effect<AcpProviderSettings>;
+  /** Optional ACP runtime factory for providers using the shared adapter. */
+  readonly makeAcpRuntime?: typeof makeCursorAcpRuntime;
 }
 
 interface PendingApproval {
@@ -311,10 +319,12 @@ function selectAutoApprovedPermissionOption(
 }
 
 export function makeCursorAdapter(
-  cursorSettings: CursorSettings,
+  cursorSettings: AcpProviderSettings,
   options?: CursorAdapterLiveOptions,
 ) {
   return Effect.gen(function* () {
+    const PROVIDER = options?.provider ?? DEFAULT_PROVIDER;
+    const makeAcpRuntime = options?.makeAcpRuntime ?? makeCursorAcpRuntime;
     const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("cursor");
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -532,7 +542,7 @@ export function makeCursorAdapter(
             : cursorSettings;
 
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
-          const acp = yield* makeCursorAcpRuntime({
+          const acp = yield* makeAcpRuntime({
             cursorSettings: effectiveCursorSettings,
             ...(options?.environment ? { environment: options.environment } : {}),
             childProcessSpawner,
@@ -967,6 +977,12 @@ export function makeCursorAdapter(
           }
 
           const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
+          if (input.resolvedSkills?.length) {
+            promptParts.push({
+              type: "text",
+              text: formatResolvedSkillsPromptText(input.resolvedSkills),
+            });
+          }
           if (input.input?.trim()) {
             promptParts.push({ type: "text", text: input.input.trim() });
           }

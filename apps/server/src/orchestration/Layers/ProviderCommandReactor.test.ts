@@ -1552,6 +1552,91 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  it("resolves a $skill reference from the shared catalog and attaches it to the turn", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const worktreePath = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "t3code-reactor-skill-worktree-"),
+    );
+    createdBaseDirs.add(worktreePath);
+    const skillDir = NodePath.join(worktreePath, ".claude", "skills", "t3-reactor-test-skill");
+    NodeFS.mkdirSync(skillDir, { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: t3-reactor-test-skill",
+        "description: A skill only this test knows about.",
+        "---",
+        "",
+        "Ask another model to review the diff.",
+      ].join("\n"),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-skill-worktree"),
+        threadId: ThreadId.make("thread-1"),
+        branch: "t3code/skill-test",
+        worktreePath,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-skill"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-skill"),
+          role: "user",
+          text: "Please run $t3-reactor-test-skill on this.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      threadId: ThreadId.make("thread-1"),
+      resolvedSkills: [
+        {
+          name: "t3-reactor-test-skill",
+          instructions: "Ask another model to review the diff.",
+        },
+      ],
+    });
+  });
+
+  it("omits resolvedSkills when the message references no known skill", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-no-skill"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-no-skill"),
+          role: "user",
+          text: "Please run $nonexistent-skill-reference on this.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.sendTurn.mock.calls[0]?.[0]).not.toHaveProperty("resolvedSkills");
+  });
+
   it("forwards claude effort options through session start and turn send", async () => {
     const harness = await createHarness({
       threadModelSelection: {

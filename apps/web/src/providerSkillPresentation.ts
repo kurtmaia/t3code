@@ -51,3 +51,15 @@ export function formatProviderSkillInstallSource(
 
   return null;
 }
+
+/**
+ * Label for a skill layered in from the shared, cross-provider catalog
+ * because the active provider has no skill of that name natively (see
+ * `apps/server/src/provider/SharedSkillCatalog.ts`). `null` for a provider's
+ * own native skills, so callers can omit the badge entirely.
+ */
+export function formatProviderSkillOrigin(
+  skill: Pick<ServerProviderSkill, "origin">,
+): string | null {
+  return skill.origin === "shared" ? "Shared" : null;
+}

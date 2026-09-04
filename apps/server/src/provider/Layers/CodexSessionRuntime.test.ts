@@ -222,6 +222,26 @@ describe("buildTurnStartParams", () => {
     }),
   );
 
+  it("folds resolvedSkills into the developer instructions", () => {
+    const params = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "Get a second opinion",
+        model: "gpt-5.3-codex",
+        interactionMode: "default",
+        resolvedSkills: [
+          { name: "second-opinion", instructions: "Ask another model to review the diff." },
+        ],
+      }),
+    );
+
+    NodeAssert.match(
+      params.collaborationMode?.settings?.developer_instructions ?? "",
+      /### second-opinion/,
+    );
+  });
+
   it("omits collaboration mode when interaction mode is absent", () => {
     const params = Effect.runSync(
       buildTurnStartParams({
@@ -292,6 +312,27 @@ describe("buildCodexDeveloperInstructions", () => {
 
     NodeAssert.match(instructions, /as gpt 5\.3 codex with high effort reasoning effort/);
     NodeAssert.doesNotMatch(instructions, /<runtime_info>[^<]*\n/);
+  });
+
+  it("appends resolved skill instructions when provided", () => {
+    const instructions = buildCodexDeveloperInstructions(
+      "default",
+      { model: "gpt-5.3-codex", reasoningEffort: "medium" },
+      true,
+      [{ name: "second-opinion", instructions: "Ask another model to review the diff." }],
+    );
+
+    NodeAssert.match(instructions, /### second-opinion/);
+    NodeAssert.match(instructions, /Ask another model to review the diff\./);
+  });
+
+  it("omits the resolved skill block when there are none", () => {
+    const instructions = buildCodexDeveloperInstructions("default", {
+      model: "gpt-5.3-codex",
+      reasoningEffort: "medium",
+    });
+
+    NodeAssert.doesNotMatch(instructions, /supplementary_skill_instructions/);
   });
 });
 

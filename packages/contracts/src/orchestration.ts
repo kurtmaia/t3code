@@ -144,6 +144,8 @@ export type ProviderUserInputAnswers = typeof ProviderUserInputAnswers.Type;
 
 export const PROVIDER_SEND_TURN_MAX_INPUT_CHARS = 120_000;
 export const PROVIDER_SEND_TURN_MAX_ATTACHMENTS = 8;
+export const PROVIDER_SEND_TURN_MAX_RESOLVED_SKILLS = 20;
+export const PROVIDER_SEND_TURN_MAX_SKILL_INSTRUCTIONS_CHARS = 20_000;
 export const PROVIDER_SEND_TURN_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 export const PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES = [
   "image/gif",
@@ -1073,6 +1075,18 @@ const TaskMetaUpdateCommand = Schema.Struct({
   planMarkdown: Schema.optional(Schema.NullOr(TrimmedString)),
 });
 
+const TaskImportReconcileCommand = Schema.Struct({
+  type: Schema.Literal("task.import.reconcile"),
+  commandId: CommandId,
+  taskId: TaskId,
+  title: Schema.optional(TrimmedNonEmptyString),
+  status: Schema.optional(TaskStatus),
+  priority: Schema.optional(TaskPriority),
+  body: Schema.optional(TrimmedString),
+  labels: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  orderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+});
+
 const TaskStatusSetCommand = Schema.Struct({
   type: Schema.Literal("task.status.set"),
   commandId: CommandId,
@@ -1240,6 +1254,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
   ThreadTitleRegenerationCompleteCommand,
+  TaskImportReconcileCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -1281,6 +1296,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.activity-appended",
   "task.created",
   "task.meta-updated",
+  "task.import-reconciled",
   "task.status-changed",
   "task.reordered",
   "task.deleted",
@@ -1561,6 +1577,17 @@ export const TaskMetaUpdatedPayload = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 
+export const TaskImportReconciledPayload = Schema.Struct({
+  taskId: TaskId,
+  title: Schema.optional(TrimmedNonEmptyString),
+  status: Schema.optional(TaskStatus),
+  priority: Schema.optional(TaskPriority),
+  body: Schema.optional(TrimmedString),
+  labels: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  orderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  updatedAt: IsoDateTime,
+});
+
 export const TaskStatusChangedPayload = Schema.Struct({
   taskId: TaskId,
   status: TaskStatus,
@@ -1748,6 +1775,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("task.meta-updated"),
     payload: TaskMetaUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("task.import-reconciled"),
+    payload: TaskImportReconciledPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,
