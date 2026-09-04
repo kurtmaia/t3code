@@ -28,7 +28,6 @@ import {
   type UsageSummaryInput,
   UsageReadError,
 } from "@t3tools/contracts";
-import { CopilotClient, RuntimeConnection } from "@github/copilot-sdk";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -206,6 +205,18 @@ export const make = Effect.gen(function* () {
     const copilotExecutable = yield* resolveCopilotExecutable();
     if (copilotExecutable === null) return null;
     const copilotBaseDirectory = path.join(NodeOS.homedir(), ".copilot");
+    // Loaded on demand, never at module scope. `ws.ts` imports this service on
+    // the server's boot path, and the SDK pulls in a native FFI module (koffi)
+    // plus the Copilot CLI itself; a resolution or native-load failure at
+    // import time would take the whole backend down in a restart loop, for a
+    // provider that is disabled by default. Here it degrades to an unavailable
+    // quota, which the tile already knows how to render.
+    const sdk = yield* Effect.tryPromise(() => import("@github/copilot-sdk")).pipe(
+      Effect.catchCause(() => Effect.succeed(null)),
+    );
+    if (sdk === null) return null;
+    const { CopilotClient, RuntimeConnection } = sdk;
+
     const result = yield* Effect.promise(async () => {
       // Use the user's installed CLI so this works on machines where the SDK's
       // optional platform package is not bundled (and reuses Copilot's login).
