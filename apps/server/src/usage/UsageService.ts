@@ -12,15 +12,24 @@
  * @module UsageService
  */
 import * as NodeOS from "node:os";
+// Claude's quota lives behind a one-shot `claude -p /usage`, which needs the
+// timeout/maxBuffer knobs `execFile` has and Effect's ChildProcess does not
+// expose; the call is fully contained in `runClaudeUsageCommand` below.
+// @effect-diagnostics-next-line nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
 
 import {
   USAGE_CONTRACT_VERSION,
+  type ServerSettings as ServerSettingsConfig,
   type UsageProviderKind,
+  type UsageProviderQuota,
   type UsageSource,
   type UsageSummary,
   type UsageSummaryInput,
   UsageReadError,
 } from "@t3tools/contracts";
+import { CopilotClient, RuntimeConnection } from "@github/copilot-sdk";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -34,6 +43,7 @@ import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import { ServerConfig } from "../config.ts";
+import { expandHomePath } from "../pathExpansion.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
@@ -41,9 +51,16 @@ import { UsageAggregator } from "./usageAggregation.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
+  readLatestCodexRateLimits,
   readDirectoryVolumeId,
   readTranscriptRecords,
 } from "./usageTranscriptReader.ts";
+import {
+  copilotQuotaWindow,
+  parseClaudeUsageCommandOutput,
+  parseCodexRateLimitsLine,
+  unavailableQuota,
+} from "./usageQuotas.ts";
 import {
   decodeScanCache,
   dedupeWithinFile,
@@ -112,6 +129,7 @@ export const layerTest = Layer.succeed(
           fetchedAt: null,
           knownModels: 0,
         },
+        providerQuotas: [],
         scanDurationMs: 0,
       }),
   }),
@@ -132,6 +150,157 @@ export const make = Effect.gen(function* () {
   let rates: RateTable = new Map();
   let ratesFetchedAtMs: number | null = null;
   let ratesStatus: UsageSummary["pricing"]["status"] = "unavailable";
+  let providerQuotas: readonly UsageProviderQuota[] = [];
+  let providerQuotasReadAtMs = 0;
+
+  /**
+   * First `copilot` on `PATH`, or `null` when it is not installed — the SDK
+   * drives the user's own CLI so it reuses their Copilot login rather than
+   * needing the SDK's optional platform package bundled.
+   */
+  const resolveCopilotExecutable = Effect.fn("UsageService.resolveCopilotExecutable")(function* () {
+    const platform = yield* HostProcessPlatform;
+    const environment = yield* HostProcessEnvironment;
+
+    const binary = platform === "win32" ? "copilot.exe" : "copilot";
+    for (const directory of (environment.PATH ?? "").split(platform === "win32" ? ";" : ":")) {
+      if (!directory) continue;
+      const candidate = path.join(directory, binary);
+      // Keep looking on a miss; Copilot is an optional provider.
+      const found = yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false));
+      if (found) return candidate;
+    }
+    return null;
+  });
+
+  const runClaudeUsageCommand = (settings: ServerSettingsConfig) =>
+    Effect.gen(function* () {
+      const claudeSettings = settings.providers.claudeAgent;
+      const platform = yield* HostProcessPlatform;
+      const environment = { ...(yield* HostProcessEnvironment) };
+      if (claudeSettings.homePath.trim().length > 0) {
+        environment.CLAUDE_CONFIG_DIR = path.resolve(expandHomePath(claudeSettings.homePath));
+      }
+      return yield* Effect.promise(
+        () =>
+          new Promise<string | null>((resolve) => {
+            NodeChildProcess.execFile(
+              claudeSettings.binaryPath,
+              ["-p", "/usage", "--output-format", "json"],
+              {
+                env: environment,
+                timeout: 15_000,
+                maxBuffer: 512 * 1024,
+                shell: platform === "win32",
+              },
+              (error, stdout) => resolve(error ? null : stdout),
+            );
+          }),
+      );
+    }).pipe(
+      Effect.timeout(16_000),
+      Effect.catchCause(() => Effect.succeed(null)),
+    );
+
+  const readCopilotQuota = Effect.fn("UsageService.readCopilotQuota")(function* () {
+    const copilotExecutable = yield* resolveCopilotExecutable();
+    if (copilotExecutable === null) return null;
+    const copilotBaseDirectory = path.join(NodeOS.homedir(), ".copilot");
+    const result = yield* Effect.promise(async () => {
+      // Use the user's installed CLI so this works on machines where the SDK's
+      // optional platform package is not bundled (and reuses Copilot's login).
+      const client = new CopilotClient({
+        mode: "empty",
+        logLevel: "none",
+        baseDirectory: copilotBaseDirectory,
+        connection: RuntimeConnection.forStdio({ path: copilotExecutable }),
+      });
+      try {
+        await client.start();
+        const response = await client.rpc.account.getQuota({});
+        const snapshots = response.quotaSnapshots as Record<
+          string,
+          (typeof response.quotaSnapshots)[string] & { hasQuota?: boolean }
+        >;
+        const preferredTypes = ["premium_interactions", "chat", "completions"] as const;
+        const quotaType =
+          preferredTypes.find((type) => snapshots[type]?.hasQuota) ??
+          preferredTypes.find((type) => snapshots[type] !== undefined);
+        const snapshot = quotaType === undefined ? undefined : snapshots[quotaType];
+        if (quotaType === undefined || !snapshot) return null;
+        return copilotQuotaWindow({
+          window:
+            quotaType === "premium_interactions"
+              ? "Premium interactions"
+              : quotaType === "chat"
+                ? "Chat requests"
+                : "Completions",
+          remainingPercentage: snapshot.remainingPercentage,
+          usedAmount: Math.max(0, snapshot.usedRequests),
+          limitAmount: snapshot.isUnlimitedEntitlement
+            ? null
+            : Math.max(0, snapshot.entitlementRequests),
+          unit: "requests",
+          resetDate: snapshot.resetDate ?? null,
+          isUnlimited: snapshot.isUnlimitedEntitlement,
+        });
+      } catch {
+        return null;
+      } finally {
+        await client.stop().catch(() => undefined);
+      }
+    }).pipe(
+      Effect.timeout(15_000),
+      Effect.catchCause(() => Effect.succeed(null)),
+    );
+    return result;
+  });
+
+  const readProviderQuotas = Effect.fn("UsageService.readProviderQuotas")(function* (
+    settings: ServerSettingsConfig,
+    codexDir: string,
+  ) {
+    const now = yield* Clock.currentTimeMillis;
+    if (now - providerQuotasReadAtMs < 5 * 60 * 1000) return providerQuotas;
+
+    // These are independent provider-owned sources. Run them together so a
+    // slow CLI cannot make the other quota checks wait behind it.
+    const [claudeQuotas, codexQuotas, copilot] = yield* Effect.all(
+      [
+        (settings.providers.claudeAgent.enabled
+          ? runClaudeUsageCommand(settings)
+          : Effect.succeed(null)
+        ).pipe(Effect.map((output) => (output ? parseClaudeUsageCommandOutput(output) : []))),
+        Effect.promise(() => readLatestCodexRateLimits(codexDir)).pipe(
+          Effect.catchCause(() => Effect.succeed([] as readonly string[])),
+          Effect.map((lines) => lines.flatMap(parseCodexRateLimitsLine)),
+        ),
+        // A Copilot tile is only honest for someone who runs Copilot: gate it
+        // on the setting rather than on the binary happening to be on PATH,
+        // or every user gets a permanent "unavailable" row for a provider
+        // they never enabled.
+        settings.providers.githubCopilot.enabled ? readCopilotQuota() : Effect.succeed(null),
+      ],
+      { concurrency: "unbounded" },
+    );
+
+    providerQuotas = [
+      ...(claudeQuotas.length > 0
+        ? claudeQuotas
+        : [unavailableQuota("claude", "Claude Code quota is unavailable.")]),
+      ...(codexQuotas.length > 0
+        ? codexQuotas
+        : [unavailableQuota("codex", "Codex quota is unavailable.")]),
+      ...(settings.providers.githubCopilot.enabled
+        ? [copilot ?? unavailableQuota("copilot", "Copilot quota is unavailable.")]
+        : []),
+    ];
+    // Stamped after the reads, not before: marking the cache fresh up front
+    // hands a concurrent reader the previous (or empty) value as though it
+    // were current, and leaves an interrupted first read "fresh" for 5 minutes.
+    providerQuotasReadAtMs = yield* Clock.currentTimeMillis;
+    return providerQuotas;
+  });
 
   /**
    * Loads the LiteLLM rate table, preferring a fresh copy and falling back to
@@ -198,23 +367,9 @@ export const make = Effect.gen(function* () {
     });
 
   /** Resolves the transcript directory for each provider. */
-  const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* () {
-    // A settings failure must surface as an error: swallowing it here would
-    // present "zero usage from every provider" as a valid answer.
-    const settings = yield* settingsService.getSettings.pipe(
-      Effect.catchCause(
-        (cause) =>
-          new UsageReadError({
-            reason: "scanFailed",
-            // Bounded description; the squashed failure travels as the cause.
-            // Squashed, not the Cause tree: a full tree in a Defect field is
-            // the unbounded wire payload the bounded detail exists to avoid.
-            detail: "Server settings could not be read.",
-            cause: Cause.squash(cause),
-          }),
-      ),
-    );
-
+  const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* (
+    settings: ServerSettingsConfig,
+  ) {
     const claudeHome = yield* resolveClaudeHomePath(settings.providers.claudeAgent);
     const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
     const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
@@ -323,13 +478,30 @@ export const make = Effect.gen(function* () {
     }
 
     const startedAtMs = yield* Clock.currentTimeMillis;
+    // A settings failure must surface as an error: swallowing it here would
+    // present "zero usage from every provider" as a valid answer.
+    const settings = yield* settingsService.getSettings.pipe(
+      Effect.catchCause(
+        (cause) =>
+          new UsageReadError({
+            reason: "scanFailed",
+            detail: "Server settings could not be read.",
+            cause: Cause.squash(cause),
+          }),
+      ),
+    );
+
     yield* ensureRates();
     yield* ensureScanCacheLoaded;
 
     const hostId = NodeOS.hostname();
     // The home resolvers ask for `Path` themselves; satisfy them from the
     // instance we already hold so `readSummary` stays context-free.
-    const dirs = yield* resolveTranscriptDirs().pipe(Effect.provideService(Path.Path, path));
+    const dirs = yield* resolveTranscriptDirs(settings).pipe(
+      Effect.provideService(Path.Path, path),
+    );
+    const codexDir = dirs.find((entry) => entry.provider === "codex")?.dir ?? "";
+    yield* readProviderQuotas(settings, codexDir);
     const windowStart = DateTime.make(`${input.sinceDay}T00:00:00Z`);
     if (Option.isNone(windowStart)) {
       return yield* new UsageReadError({
@@ -438,6 +610,7 @@ export const make = Effect.gen(function* () {
             : DateTime.formatIso(DateTime.makeUnsafe(ratesFetchedAtMs)),
         knownModels: rates.size,
       },
+      providerQuotas,
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
     } satisfies UsageSummary;
   });

@@ -31,6 +31,27 @@ export interface TranscriptFile {
   readonly mtimeMs: number;
 }
 
+/** Reads the final account rate-limit event from the newest Codex transcript. */
+export async function readLatestCodexRateLimits(root: string): Promise<readonly string[]> {
+  const files = await listTranscriptFiles(root, 0);
+  const newest = files.toSorted((a, b) => b.mtimeMs - a.mtimeMs)[0];
+  if (!newest) return [];
+
+  let latest: readonly string[] = [];
+  try {
+    const lines = NodeReadline.createInterface({
+      input: NodeFS.createReadStream(newest.path, { encoding: "utf8" }),
+      crlfDelay: Infinity,
+    });
+    for await (const line of lines) {
+      if (line.includes('"rate_limits"')) latest = [line];
+    }
+  } catch {
+    return [];
+  }
+  return latest;
+}
+
 /**
  * Lists `.jsonl` transcripts under `root` last modified at or after `sinceMs`.
  *

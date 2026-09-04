@@ -21,7 +21,7 @@ import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 4 as const;
+export const USAGE_CONTRACT_VERSION = 5 as const;
 
 export const UsageProviderKind = Schema.Literals(["claude", "codex"]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;
@@ -160,6 +160,28 @@ export const UsagePricing = Schema.Struct({
 });
 export type UsagePricing = typeof UsagePricing.Type;
 
+/** Providers with account-level quota information surfaced by their CLIs. */
+export const UsageQuotaProviderKind = Schema.Literals(["claude", "codex", "copilot"]);
+export type UsageQuotaProviderKind = typeof UsageQuotaProviderKind.Type;
+
+export const UsageQuotaUnit = Schema.Literals(["percent", "requests", "credits"]);
+export type UsageQuotaUnit = typeof UsageQuotaUnit.Type;
+
+/** One provider-reported quota window, or an honest unavailable placeholder. */
+export const UsageProviderQuota = Schema.Struct({
+  provider: UsageQuotaProviderKind,
+  window: TrimmedNonEmptyString,
+  remainingPercentage: Schema.NullOr(Schema.Number),
+  usedAmount: Schema.NullOr(Schema.Number),
+  limitAmount: Schema.NullOr(Schema.Number),
+  unit: UsageQuotaUnit,
+  isUnlimited: Schema.Boolean,
+  resetDate: Schema.NullOr(Schema.String),
+  status: Schema.Literals(["available", "unavailable"]),
+  message: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type UsageProviderQuota = typeof UsageProviderQuota.Type;
+
 export const UsageSummaryInput = Schema.Struct({
   /** Inclusive first day of the window, in `timeZone`. */
   sinceDay: UsageDay,
@@ -188,6 +210,8 @@ export const UsageSummary = Schema.Struct({
   buckets: Schema.Array(UsageBucket),
   sources: Schema.Array(UsageSource),
   pricing: UsagePricing,
+  /** Account quota windows, kept separate from raw transcript token usage. */
+  providerQuotas: Schema.optionalKey(Schema.Array(UsageProviderQuota)),
   /** Wall-clock cost of the scan, surfaced in diagnostics. */
   scanDurationMs: NonNegativeInt,
 });
