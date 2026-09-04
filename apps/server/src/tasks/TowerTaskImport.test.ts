@@ -5,6 +5,7 @@ import {
   mapTowerPriority,
   mapTowerStatus,
   parseTowerTaskFile,
+  towerDraftDiffers,
   towerOrderKey,
 } from "./TowerTaskImport.ts";
 
@@ -131,4 +132,45 @@ it("reports which external ids a project already imported", () => {
   expect(seen.has("002-y")).toBe(true);
   expect(seen.has("003-z")).toBe(false);
   expect(seen.size).toBe(2);
+});
+
+it("returns only changed mirrored fields and ignores label order", () => {
+  const draft = parseTowerTaskFile({
+    externalId: "001-task",
+    contents:
+      "---\ntitle: Updated\nstatus: review\npriority: P1\norder: 2\nlabels: [b, a]\n---\nNew body",
+  });
+  expect(draft).not.toBeNull();
+  const task = {
+    title: "Old",
+    status: "pending",
+    priority: "P2",
+    body: "Old body",
+    labels: ["a", "b"],
+    orderKey: "000001",
+  } as never;
+  expect(towerDraftDiffers(draft!, task)).toEqual({
+    title: "Updated",
+    status: "review",
+    priority: "P1",
+    body: "New body",
+    orderKey: "000002",
+  });
+});
+
+it("returns null for an unchanged draft", () => {
+  const draft = parseTowerTaskFile({
+    externalId: "001-task",
+    contents: "---\ntitle: Same\nstatus: pending\npriority: P2\nlabels: [a, b]\n---\nBody",
+  });
+  expect(
+    towerDraftDiffers(draft!, {
+      title: "Same",
+      status: "pending",
+      priority: "P2",
+      body: "Body",
+      labels: ["b", "a"],
+      orderKey: null,
+    } as never),
+  ).toBeNull();
 });

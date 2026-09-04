@@ -20,6 +20,7 @@ import {
   requireProject,
   requireProjectAbsent,
   requireTask,
+  requireTowerTaskSource,
   requireTaskAbsent,
   requireTaskSourceIdentityAbsent,
   requireThread,
@@ -1520,6 +1521,37 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.branch !== undefined ? { branch: command.branch } : {}),
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
           ...(command.planMarkdown !== undefined ? { planMarkdown: command.planMarkdown } : {}),
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
+    case "task.import.reconcile": {
+      const task = yield* requireTask({
+        readModel,
+        command,
+        taskId: command.taskId,
+      });
+      yield* requireTowerTaskSource({ command, task });
+      const occurredAt = yield* nowIso;
+      // This is reconciliation, not a board move: tower is authoritative and
+      // may establish any status, including moves rejected by the UI lifecycle.
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "task",
+          aggregateId: command.taskId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "task.import-reconciled",
+        payload: {
+          taskId: command.taskId,
+          ...(command.title !== undefined ? { title: command.title } : {}),
+          ...(command.status !== undefined ? { status: command.status } : {}),
+          ...(command.priority !== undefined ? { priority: command.priority } : {}),
+          ...(command.body !== undefined ? { body: command.body } : {}),
+          ...(command.labels !== undefined ? { labels: command.labels } : {}),
+          ...(command.orderKey !== undefined ? { orderKey: command.orderKey } : {}),
           updatedAt: occurredAt,
         },
       };

@@ -284,6 +284,20 @@ export function requireLegalTaskTransition(input: {
   );
 }
 
+/** Only the external task store may establish a tower task's mirrored state. */
+export function requireTowerTaskSource(input: {
+  readonly command: OrchestrationCommand;
+  readonly task: OrchestrationTask;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  if (input.task.source === "tower") return Effect.void;
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Task '${input.task.id}' is not owned by tower and cannot be reconciled.`,
+    ),
+  );
+}
+
 /**
  * Refuses a second task claiming one external identity within a project, which
  * is what makes importing from an external tool idempotent: re-running an

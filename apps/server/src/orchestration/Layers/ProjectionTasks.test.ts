@@ -88,6 +88,64 @@ engineLayer("task board round trip", (it) => {
     }),
   );
 
+  it.effect("writes a tower reconciliation through to the durable projection row", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-project-tower"),
+        projectId: ProjectId.make("project-tower"),
+        title: "Tower Project",
+        workspaceRoot: "/tmp/project-tower",
+        createdAt: CREATED_AT,
+      });
+      yield* engine.dispatch({
+        type: "task.create",
+        commandId: CommandId.make("cmd-task-tower"),
+        taskId: TaskId.make("task-tower"),
+        projectId: ProjectId.make("project-tower"),
+        title: "Mirrored from tower",
+        source: "tower",
+        externalId: "001-mirrored",
+        createdAt: CREATED_AT,
+      });
+
+      yield* engine.dispatch({
+        type: "task.import.reconcile",
+        commandId: CommandId.make("cmd-task-tower-reconcile"),
+        taskId: TaskId.make("task-tower"),
+        title: "Renamed in tower",
+        // review is not reachable from pending through the board lifecycle;
+        // tower is authoritative and may establish it directly.
+        status: "review",
+        priority: "P1",
+      });
+
+      // The snapshot is what a client renders...
+      const snapshot = yield* snapshotQuery.getSnapshot();
+      const reconciled = snapshot.tasks.find((task) => task.id === TaskId.make("task-tower"));
+      assert.equal(reconciled?.title, "Renamed in tower");
+      assert.equal(reconciled?.status, "review");
+
+      // ...and the projection row is the half that has to survive a restart.
+      // Without a `task.import-reconciled` case the cursor still advances, so
+      // this row would silently keep the pre-reconciliation values forever.
+      const rows = yield* sql<{
+        readonly title: string;
+        readonly status: string;
+        readonly priority: string;
+      }>`
+        SELECT title, status, priority
+        FROM projection_tasks
+        WHERE task_id = ${TaskId.make("task-tower")}
+      `;
+      assert.deepEqual(rows, [{ title: "Renamed in tower", status: "review", priority: "P1" }]);
+    }),
+  );
+
   it.effect("moves a task across the board and rejects an illegal move", () =>
     Effect.gen(function* () {
       const engine = yield* OrchestrationEngineService;

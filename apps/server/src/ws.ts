@@ -576,6 +576,7 @@ const makeWsRpcLayer = (
             );
           case "task.created":
           case "task.meta-updated":
+          case "task.import-reconciled":
           case "task.status-changed":
           case "task.reordered":
             return taskUpsertOrRemove(event.payload.taskId, event.sequence);

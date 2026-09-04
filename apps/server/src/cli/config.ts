@@ -98,6 +98,9 @@ const EnvServerConfig = Config.all({
     Config.withDefault(10_000),
   ),
   otlpServiceName: Config.string("T3CODE_OTLP_SERVICE_NAME").pipe(Config.withDefault("t3-server")),
+  towerTaskImportSyncIntervalMs: Config.int("T3CODE_TOWER_TASK_IMPORT_SYNC_INTERVAL_MS").pipe(
+    Config.withDefault(30_000),
+  ),
   mode: Config.schema(ServerConfig.RuntimeMode, "T3CODE_MODE").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -366,6 +369,7 @@ export const resolveServerConfig = (
         persistedObservabilitySettings.otlpMetricsUrl,
       otlpExportIntervalMs: env.otlpExportIntervalMs,
       otlpServiceName: env.otlpServiceName,
+      towerTaskImportSyncIntervalMs: env.towerTaskImportSyncIntervalMs,
       mode,
       port,
       cwd,

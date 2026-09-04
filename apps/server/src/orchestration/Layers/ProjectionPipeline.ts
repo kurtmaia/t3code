@@ -1665,6 +1665,30 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             return;
           }
 
+          // Tower is authoritative for the fields it mirrors, so a
+          // reconciliation writes whichever of them the draft carried. The
+          // shape mirrors `task.meta-updated` plus the two fields the board
+          // owns for local tasks, `status` and `orderKey`.
+          case "task.import-reconciled": {
+            const existingRow = yield* projectionTaskRepository.getById({
+              taskId: event.payload.taskId,
+            });
+            if (Option.isNone(existingRow)) {
+              return;
+            }
+            yield* projectionTaskRepository.upsert({
+              ...existingRow.value,
+              ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
+              ...(event.payload.status !== undefined ? { status: event.payload.status } : {}),
+              ...(event.payload.priority !== undefined ? { priority: event.payload.priority } : {}),
+              ...(event.payload.body !== undefined ? { body: event.payload.body } : {}),
+              ...(event.payload.labels !== undefined ? { labels: event.payload.labels } : {}),
+              ...(event.payload.orderKey !== undefined ? { orderKey: event.payload.orderKey } : {}),
+              updatedAt: event.payload.updatedAt,
+            });
+            return;
+          }
+
           case "task.status-changed": {
             const existingRow = yield* projectionTaskRepository.getById({
               taskId: event.payload.taskId,

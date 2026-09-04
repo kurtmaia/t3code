@@ -29,6 +29,7 @@ import {
   ThreadSessionStopRequestedPayload as ContractsThreadSessionStopRequestedPayloadSchema,
   TaskCreatedPayload as ContractsTaskCreatedPayloadSchema,
   TaskMetaUpdatedPayload as ContractsTaskMetaUpdatedPayloadSchema,
+  TaskImportReconciledPayload as ContractsTaskImportReconciledPayloadSchema,
   TaskStatusChangedPayload as ContractsTaskStatusChangedPayloadSchema,
   TaskReorderedPayload as ContractsTaskReorderedPayloadSchema,
   TaskDeletedPayload as ContractsTaskDeletedPayloadSchema,
@@ -72,6 +73,7 @@ export const ThreadSessionStopRequestedPayload = ContractsThreadSessionStopReque
 
 export const TaskCreatedPayload = ContractsTaskCreatedPayloadSchema;
 export const TaskMetaUpdatedPayload = ContractsTaskMetaUpdatedPayloadSchema;
+export const TaskImportReconciledPayload = ContractsTaskImportReconciledPayloadSchema;
 export const TaskStatusChangedPayload = ContractsTaskStatusChangedPayloadSchema;
 export const TaskReorderedPayload = ContractsTaskReorderedPayloadSchema;
 export const TaskDeletedPayload = ContractsTaskDeletedPayloadSchema;

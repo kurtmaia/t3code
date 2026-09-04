@@ -42,6 +42,7 @@ import {
   TaskCreatedPayload,
   TaskDeletedPayload,
   TaskMetaUpdatedPayload,
+  TaskImportReconciledPayload,
   TaskReorderedPayload,
   TaskStatusChangedPayload,
 } from "./Schemas.ts";
@@ -870,6 +871,22 @@ export function projectEvent(
             ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
             ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
             ...(payload.planMarkdown !== undefined ? { planMarkdown: payload.planMarkdown } : {}),
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "task.import-reconciled":
+      return decodeForEvent(TaskImportReconciledPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          tasks: updateTask(nextBase.tasks, payload.taskId, {
+            ...(payload.title !== undefined ? { title: payload.title } : {}),
+            ...(payload.status !== undefined ? { status: payload.status } : {}),
+            ...(payload.priority !== undefined ? { priority: payload.priority } : {}),
+            ...(payload.body !== undefined ? { body: payload.body } : {}),
+            ...(payload.labels !== undefined ? { labels: payload.labels } : {}),
+            ...(payload.orderKey !== undefined ? { orderKey: payload.orderKey } : {}),
             updatedAt: payload.updatedAt,
           }),
         })),

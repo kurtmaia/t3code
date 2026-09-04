@@ -100,6 +100,39 @@ it.effect("leaves absent meta fields alone", () =>
   }),
 );
 
+it.effect("projects a combined tower reconciliation in one event", () =>
+  Effect.gen(function* () {
+    const created = yield* projectEvent(createEmptyReadModel(NOW), createdEvent);
+    const reconciled = yield* projectEvent(
+      created,
+      makeEvent({
+        sequence: 2,
+        type: "task.import-reconciled",
+        payload: {
+          taskId: TASK_ID,
+          title: "Tower title",
+          status: "review",
+          priority: "P1",
+          body: "Tower body",
+          labels: ["tower"],
+          orderKey: "000004",
+          updatedAt: LATER,
+        },
+        occurredAt: LATER,
+      }),
+    );
+    expect(reconciled.tasks[0]).toMatchObject({
+      title: "Tower title",
+      status: "review",
+      priority: "P1",
+      body: "Tower body",
+      labels: ["tower"],
+      orderKey: "000004",
+      updatedAt: LATER,
+    });
+  }),
+);
+
 it.effect("records a reorder key", () =>
   Effect.gen(function* () {
     const created = yield* projectEvent(createEmptyReadModel(NOW), createdEvent);

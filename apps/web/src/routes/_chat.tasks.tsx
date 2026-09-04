@@ -449,6 +449,7 @@ function TasksPage() {
   const navigate = useNavigate();
 
   const [title, setTitle] = useState("");
+  const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [draggedStatus, setDraggedStatus] = useState<TaskStatus | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -520,8 +521,25 @@ function TasksPage() {
     [selectedTaskId, tasks],
   );
 
-  // A board with no project to file a task against cannot create one.
-  const target = projects[0] ?? null;
+  const projectKey = useCallback(
+    (project: (typeof projects)[number]) => `${project.environmentId}:${project.id}`,
+    [],
+  );
+
+  // Keep the selector useful when projects are added or removed remotely.
+  useEffect(() => {
+    if (projects.length === 0) {
+      setSelectedProjectKey(null);
+      return;
+    }
+    const selectedStillExists = projects.some(
+      (project) => projectKey(project) === selectedProjectKey,
+    );
+    if (!selectedStillExists) setSelectedProjectKey(projectKey(projects[0]!));
+  }, [projectKey, projects, selectedProjectKey]);
+
+  const target =
+    projects.find((project) => projectKey(project) === selectedProjectKey) ?? projects[0] ?? null;
 
   const handleCreate = useCallback(() => {
     const trimmed = title.trim();
@@ -728,6 +746,20 @@ function TasksPage() {
         </div>
 
         <div className="flex w-full items-center gap-2 sm:ml-auto sm:w-auto">
+          <select
+            aria-label="Task project"
+            className="h-9 min-w-0 max-w-44 rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring sm:max-w-56"
+            disabled={projects.length === 0}
+            onChange={(event) => setSelectedProjectKey(event.target.value)}
+            value={target === null ? "" : projectKey(target)}
+          >
+            {target === null ? <option value="">Select project</option> : null}
+            {projects.map((project) => (
+              <option key={projectKey(project)} value={projectKey(project)}>
+                {project.title}
+              </option>
+            ))}
+          </select>
           <Input
             aria-label="New task title"
             className="min-w-0 flex-1 sm:w-56 sm:flex-none"

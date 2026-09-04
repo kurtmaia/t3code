@@ -77,6 +77,7 @@ function commandToAggregateRef(command: OrchestrationCommand): {
     case "task.status.set":
     case "task.reorder":
     case "task.delete":
+    case "task.import.reconcile":
       return {
         aggregateKind: "task",
         aggregateId: command.taskId,

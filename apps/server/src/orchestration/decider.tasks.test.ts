@@ -219,6 +219,43 @@ it.layer(NodeServices.layer)("task decider", (it) => {
     }),
   );
 
+  it.effect("reconciles a tower task across lifecycle boundaries", () =>
+    Effect.gen(function* () {
+      const decided = yield* decideOrchestrationCommand({
+        command: {
+          type: "task.import.reconcile",
+          commandId: CommandId.make("cmd-import-reconcile"),
+          taskId: TASK_ID,
+          status: "review",
+          title: "From tower",
+        },
+        readModel: makeReadModel([makeTask({ source: "tower" })]),
+      });
+      const events = Array.isArray(decided) ? decided : [decided];
+      expect(events).toHaveLength(1);
+      expect(events[0]?.type).toBe("task.import-reconciled");
+      if (events[0]?.type === "task.import-reconciled") {
+        expect(events[0].payload.status).toBe("review");
+        expect(events[0].payload.title).toBe("From tower");
+      }
+    }),
+  );
+
+  it.effect("refuses to reconcile a non-tower task", () =>
+    Effect.gen(function* () {
+      const error = yield* decideOrchestrationCommand({
+        command: {
+          type: "task.import.reconcile",
+          commandId: CommandId.make("cmd-import-local"),
+          taskId: TASK_ID,
+          title: "Not allowed",
+        },
+        readModel: makeReadModel([makeTask()]),
+      }).pipe(Effect.flip);
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+    }),
+  );
+
   it.effect("re-emits a reorder that would not move the task", () =>
     Effect.gen(function* () {
       const decided = yield* decideOrchestrationCommand({

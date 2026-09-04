@@ -3,18 +3,24 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
 import {
   TOWER_TASKS_RELATIVE_DIR,
   importedExternalIds,
   parseTowerTaskFile,
+  towerDraftDiffers,
   type TowerTaskDraft,
 } from "../../tasks/TowerTaskImport.ts";
+import { ServerConfig } from "../../config.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { TaskImportReactor, type TaskImportReactorShape } from "../Services/TaskImportReactor.ts";
@@ -56,15 +62,45 @@ const readTowerDraftsFor = Effect.fn("readTowerDraftsFor")(function* (workspaceR
   return drafts as ReadonlyArray<TowerTaskDraft>;
 });
 
+const readTowerTasksMtimeFor = Effect.fn("readTowerTasksMtimeFor")(function* (
+  workspaceRoot: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const tasksDir = path.join(workspaceRoot, TOWER_TASKS_RELATIVE_DIR);
+  const exists = yield* fileSystem.exists(tasksDir).pipe(Effect.orElseSucceed(() => false));
+  if (!exists) return null;
+  const entries = yield* fileSystem.readDirectory(tasksDir).pipe(Effect.orElseSucceed(() => []));
+  const mtimes = yield* Effect.all(
+    entries
+      .filter((entry) => entry.endsWith(".md"))
+      .map((entry) =>
+        fileSystem.stat(path.join(tasksDir, entry)).pipe(
+          Effect.map((info) =>
+            Option.match(info.mtime, { onNone: () => 0, onSome: (date) => date.getTime() }),
+          ),
+          Effect.orElseSucceed(() => 0),
+        ),
+      ),
+  );
+  const dirMtime = yield* fileSystem.stat(tasksDir).pipe(
+    Effect.map((info) =>
+      Option.match(info.mtime, { onNone: () => 0, onSome: (date) => date.getTime() }),
+    ),
+    Effect.orElseSucceed(() => 0),
+  );
+  return Math.max(dirMtime, ...mtimes);
+});
+
 /**
- * Imports a project's on-disk tasks. Safe to call more than once: tasks already
- * imported for the project are skipped, so a re-add is a no-op.
+ * Syncs a project's on-disk tasks. New files are created and existing tower
+ * mirrors are reconciled; files missing from disk are intentionally retained.
  *
  * Exported because project creation happens on two paths — through the server
  * (where the reactor runs) and through the CLI with no server running — and a
  * task folder should be picked up either way.
  */
-export const importTasksForProject = Effect.fn("importTasksForProject")(function* (input: {
+export const syncTasksForProject = Effect.fn("syncTasksForProject")(function* (input: {
   readonly projectId: ProjectId;
   readonly workspaceRoot: string;
 }) {
@@ -83,9 +119,14 @@ export const importTasksForProject = Effect.fn("importTasksForProject")(function
   const readModel = yield* projectionSnapshotQuery.getCommandReadModel();
   const alreadyImported = importedExternalIds(readModel.tasks, input.projectId);
   const pending = drafts.filter((draft) => !alreadyImported.has(draft.externalId));
-  if (pending.length === 0) {
-    return 0;
-  }
+  const existingByExternalId = new Map(
+    readModel.tasks
+      .filter(
+        (task) =>
+          task.projectId === input.projectId && task.source === "tower" && task.externalId !== null,
+      )
+      .map((task) => [task.externalId as string, task]),
+  );
 
   const createdAt = DateTime.formatIso(yield* DateTime.now);
   let imported = 0;
@@ -119,21 +160,64 @@ export const importTasksForProject = Effect.fn("importTasksForProject")(function
     });
   }
 
+  let reconciled = 0;
+  for (const draft of drafts) {
+    const task = existingByExternalId.get(draft.externalId);
+    if (!task) continue;
+    const patch = towerDraftDiffers(draft, task);
+    if (patch === null) continue;
+    const dispatched = yield* Effect.result(
+      orchestrationEngine.dispatch({
+        type: "task.import.reconcile",
+        commandId: CommandId.make(yield* newId),
+        taskId: task.id,
+        ...patch,
+      }),
+    );
+    if (dispatched._tag === "Success") {
+      reconciled += 1;
+    } else {
+      yield* Effect.logDebug("task import reconciliation skipped a tower task", {
+        projectId: input.projectId,
+        externalId: draft.externalId,
+        cause: dispatched.failure,
+      });
+    }
+  }
+
   yield* Effect.logInfo("imported tower tasks for project", {
     projectId: input.projectId,
     imported,
-    skipped: drafts.length - imported,
+    reconciled,
+    skipped: drafts.length - imported - reconciled,
   });
-  return imported;
+  return imported + reconciled;
 });
+
+export const importTasksForProject = syncTasksForProject;
 
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
+  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const crypto = yield* Crypto.Crypto;
+  const config = yield* ServerConfig;
+  const lastSeenMtimes = yield* Ref.make(new Map<string, number | null>());
+
+  const syncProject = (input: { readonly projectId: ProjectId; readonly workspaceRoot: string }) =>
+    syncTasksForProject(input).pipe(
+      Effect.provideService(OrchestrationEngineService, orchestrationEngine),
+      Effect.provideService(ProjectionSnapshotQuery, projectionSnapshotQuery),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(Crypto.Crypto, crypto),
+    );
 
   const processProjectCreated = Effect.fn("processProjectCreated")(function* (
     event: ProjectCreatedEvent,
   ) {
-    yield* importTasksForProject({
+    yield* syncProject({
       projectId: event.payload.projectId,
       workspaceRoot: event.payload.workspaceRoot,
     });
@@ -156,6 +240,37 @@ const make = Effect.gen(function* () {
 
   const worker = yield* makeDrainableWorker(processSafely);
 
+  const scanProjects = Effect.gen(function* () {
+    const snapshot = yield* projectionSnapshotQuery.getCommandReadModel();
+    for (const project of snapshot.projects) {
+      if (project.deletedAt !== null) continue;
+      const mtime = yield* readTowerTasksMtimeFor(project.workspaceRoot).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      );
+      const previous = yield* Ref.get(lastSeenMtimes);
+      if (previous.get(project.id) === mtime) continue;
+      const synced = yield* syncProject({
+        projectId: project.id,
+        workspaceRoot: project.workspaceRoot,
+      }).pipe(
+        Effect.as(true),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("task import reactor failed to scan project", {
+            projectId: project.id,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as(false)),
+        ),
+      );
+      // Only a sync that landed retires this mtime. Recording it up front
+      // makes a transient read or dispatch failure permanent: the next poll
+      // sees an unchanged mtime and skips the project until tower writes again.
+      if (synced) {
+        yield* Ref.update(lastSeenMtimes, (seen) => new Map(seen).set(project.id, mtime));
+      }
+    }
+  });
+
   const start: TaskImportReactorShape["start"] = Effect.fn("start")(function* () {
     yield* forkParked(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
@@ -164,6 +279,16 @@ const make = Effect.gen(function* () {
         }
         return worker.enqueue(event);
       }),
+    );
+    yield* forkParked(
+      scanProjects.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("task import reactor scan failed", { cause: Cause.pretty(cause) }),
+        ),
+        Effect.repeat(
+          Schedule.spaced(Duration.millis(config.towerTaskImportSyncIntervalMs ?? 30_000)),
+        ),
+      ),
     );
   });
 

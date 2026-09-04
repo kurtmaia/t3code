@@ -10,10 +10,10 @@ import { parse as parseYamlDocument } from "yaml";
 /**
  * Reads tasks out of a project's committed `.tower/tasks` folder.
  *
- * Import is deliberately one-way. Tower's task store is a single-writer design
+ * Import is deliberately one-way and continuous. Tower's task store is a single-writer design
  * guarded by a file lock — agents append to a sidecar event log rather than
  * touch the markdown — so writing back from here would break the invariant
- * that keeps concurrent edits from being lost. t3 reads; tower still owns.
+ * that keeps concurrent edits from being lost. t3 reads and re-syncs its mirror; tower still owns.
  */
 export const TOWER_TASKS_RELATIVE_DIR = ".tower/tasks";
 
@@ -42,6 +42,38 @@ export interface TowerTaskDraft {
   readonly body: string;
   readonly labels: ReadonlyArray<string>;
   readonly orderKey: string | null;
+}
+
+export type TowerTaskReconcilePatch = {
+  readonly title?: string;
+  readonly status?: TaskStatus;
+  readonly priority?: TaskPriority;
+  readonly body?: string;
+  readonly labels?: ReadonlyArray<string>;
+  readonly orderKey?: string | null;
+};
+
+function sameLabels(left: ReadonlyArray<string>, right: ReadonlyArray<string>): boolean {
+  if (left.length !== right.length) return false;
+  const sortedLeft = [...left].toSorted();
+  const sortedRight = [...right].toSorted();
+  return sortedLeft.every((label, index) => label === sortedRight[index]);
+}
+
+/** Returns only mirrored fields whose tower value differs from the projection. */
+export function towerDraftDiffers(
+  draft: TowerTaskDraft,
+  task: OrchestrationTask,
+): TowerTaskReconcilePatch | null {
+  const patch: TowerTaskReconcilePatch = {
+    ...(draft.title !== task.title ? { title: draft.title } : {}),
+    ...(draft.status !== task.status ? { status: draft.status } : {}),
+    ...(draft.priority !== task.priority ? { priority: draft.priority } : {}),
+    ...(draft.body !== task.body ? { body: draft.body } : {}),
+    ...(!sameLabels(draft.labels, task.labels) ? { labels: draft.labels } : {}),
+    ...(draft.orderKey !== task.orderKey ? { orderKey: draft.orderKey } : {}),
+  };
+  return Object.keys(patch).length === 0 ? null : patch;
 }
 
 const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
