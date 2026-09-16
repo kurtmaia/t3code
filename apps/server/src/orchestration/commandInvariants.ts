@@ -2,14 +2,29 @@ import type {
   OrchestrationCommand,
   OrchestrationProject,
   OrchestrationReadModel,
+  OrchestrationTask,
   OrchestrationThread,
   ProjectId,
+  ProjectRemoteBinding,
+  TaskId,
+  TaskStatus,
   ThreadId,
 } from "@t3tools/contracts";
+import { canTransitionTask } from "@t3tools/contracts";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as Effect from "effect/Effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
+
+// Hostnames and ssh aliases are case-insensitive; remote paths are not.
+function normalizeRemoteHostForComparison(host: string): string {
+  return host.trim().toLowerCase();
+}
+
+function normalizeRemotePathForComparison(remotePath: string): string {
+  const trimmed = remotePath.trim();
+  return trimmed.length > 1 ? trimmed.replace(/\/+$/u, "") : trimmed;
+}
 
 function invariantError(commandType: string, detail: string): OrchestrationCommandInvariantError {
   return new OrchestrationCommandInvariantError({
@@ -92,6 +107,71 @@ export function requireActiveProjectWorkspaceRootAbsent(input: {
     invariantError(
       input.command.type,
       `Active project '${existingProject.id}' already exists for workspace root '${normalizedWorkspaceRoot}'.`,
+    ),
+  );
+}
+
+/**
+ * Two projects must not point at the same directory on the same remote host: the remote
+ * directory is a single mutable resource with no locking, so a second binding would let two
+ * threads race each other's builds.
+ *
+ * Hosts are compared as written rather than resolved through `ssh -G`, because deciding stays
+ * pure and resolution needs a subprocess. Two different aliases for one machine therefore slip
+ * through; that is a conservative miss, not a correctness hole, and the remote path is compared
+ * case-sensitively because remote filesystems are POSIX.
+ */
+export function requireActiveProjectRemoteBindingAbsent(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly remote: ProjectRemoteBinding;
+  readonly exceptProjectId?: ProjectId;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  const host = normalizeRemoteHostForComparison(input.remote.host);
+  const remotePath = normalizeRemotePathForComparison(input.remote.remotePath);
+  const existingProject = input.readModel.projects.find(
+    (project) =>
+      project.deletedAt === null &&
+      project.id !== input.exceptProjectId &&
+      project.remote != null &&
+      normalizeRemoteHostForComparison(project.remote.host) === host &&
+      normalizeRemotePathForComparison(project.remote.remotePath) === remotePath,
+  );
+  if (existingProject === undefined) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Active project '${existingProject.id}' is already bound to '${remotePath}' on '${host}'.`,
+    ),
+  );
+}
+
+/**
+ * A context root is where a project lives, so it must be the workspace root itself or one of
+ * its ancestors. Paths arrive already absolutized by the normalizer; this only compares them.
+ */
+export function requireContextRootContainsWorkspaceRoot(input: {
+  readonly command: OrchestrationCommand;
+  readonly workspaceRoot: string;
+  readonly contextRoot: string;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  const workspaceRoot = normalizeProjectPathForComparison(input.workspaceRoot);
+  const contextRoot = normalizeProjectPathForComparison(input.contextRoot);
+  const separator = /^(?:[a-z]:|\\\\)/i.test(contextRoot) ? "\\" : "/";
+  const contained =
+    workspaceRoot === contextRoot ||
+    workspaceRoot.startsWith(
+      contextRoot.endsWith(separator) ? contextRoot : `${contextRoot}${separator}`,
+    );
+  if (contained) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Context root '${contextRoot}' must contain workspace root '${workspaceRoot}'.`,
     ),
   );
 }
@@ -179,6 +259,124 @@ export function requireNonNegativeInteger(input: {
     invariantError(
       input.commandType,
       `${input.field} must be an integer greater than or equal to 0.`,
+    ),
+  );
+}
+
+export function findTaskById(
+  readModel: OrchestrationReadModel,
+  taskId: TaskId,
+): OrchestrationTask | undefined {
+  return readModel.tasks.find((task) => task.id === taskId);
+}
+
+export function listTasksByProjectId(
+  readModel: OrchestrationReadModel,
+  projectId: ProjectId,
+): ReadonlyArray<OrchestrationTask> {
+  return readModel.tasks.filter((task) => task.projectId === projectId);
+}
+
+export function requireTask(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly taskId: TaskId;
+}): Effect.Effect<OrchestrationTask, OrchestrationCommandInvariantError> {
+  const task = findTaskById(input.readModel, input.taskId);
+  if (task && task.deletedAt === null) {
+    return Effect.succeed(task);
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Task '${input.taskId}' does not exist for command '${input.command.type}'.`,
+    ),
+  );
+}
+
+export function requireTaskAbsent(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly taskId: TaskId;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  if (!findTaskById(input.readModel, input.taskId)) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Task '${input.taskId}' already exists and cannot be created twice.`,
+    ),
+  );
+}
+
+/**
+ * Refuses a status move the lifecycle does not model. A same-status set is a
+ * no-op the decider drops rather than an error, so a double-drop on the board
+ * does not surface a failure to the user.
+ */
+export function requireLegalTaskTransition(input: {
+  readonly command: OrchestrationCommand;
+  readonly taskId: TaskId;
+  readonly from: TaskStatus;
+  readonly to: TaskStatus;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  if (input.from === input.to || canTransitionTask(input.from, input.to)) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Task '${input.taskId}' cannot move from '${input.from}' to '${input.to}'.`,
+    ),
+  );
+}
+
+/** Only the external task store may establish a tower task's mirrored state. */
+export function requireTowerTaskSource(input: {
+  readonly command: OrchestrationCommand;
+  readonly task: OrchestrationTask;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  if (input.task.source === "tower") return Effect.void;
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Task '${input.task.id}' is not owned by tower and cannot be reconciled.`,
+    ),
+  );
+}
+
+/**
+ * Refuses a second task claiming one external identity within a project, which
+ * is what makes importing from an external tool idempotent: re-running an
+ * import re-offers every task, and only the new ones survive this check.
+ */
+export function requireTaskSourceIdentityAbsent(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly projectId: ProjectId;
+  readonly source: string | null;
+  readonly externalId: string | null;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  if (input.source === null || input.externalId === null) {
+    return Effect.void;
+  }
+  // Deleted tasks still hold their identity. Re-importing one a human removed
+  // would undo their decision, and the projection's unique index would refuse
+  // the row anyway — so a delete is a permanent "not this one".
+  const existing = input.readModel.tasks.find(
+    (task) =>
+      task.projectId === input.projectId &&
+      task.source === input.source &&
+      task.externalId === input.externalId,
+  );
+  if (existing === undefined) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Task '${existing.id}' already imported '${input.externalId}' from '${input.source}' for project '${input.projectId}'.`,
     ),
   );
 }

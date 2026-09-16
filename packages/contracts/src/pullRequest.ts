@@ -998,7 +998,8 @@ const PROVIDER_REQUIREMENT: Partial<
   "azure-devops": {
     missing:
       "Azure CLI (`az`) with the Azure DevOps extension is required. Install `az`, then run `az extension add --name azure-devops`.",
-    unauthenticated: "Azure CLI is not signed in. Run `az login` and retry.",
+    unauthenticated:
+      "Azure CLI has no Azure DevOps credentials. Run `az devops login` to sign in with a personal access token, or `az login` to use an Entra identity, and retry.",
   },
   bitbucket: {
     missing:

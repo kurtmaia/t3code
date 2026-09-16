@@ -42,6 +42,12 @@ function findLabeledGroup(node: ReactNode, label: string): ReactNode {
   return undefined;
 }
 
+function textContent(node: ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (!isValidElement(node)) return Children.toArray(node).map(textContent).join(" ");
+  return textContent((node.props as { readonly children?: ReactNode }).children);
+}
+
 function menu(overrides: Partial<Parameters<typeof PullRequestFiltersMenu>[0]>) {
   return PullRequestFiltersMenu({
     state: "open",
@@ -177,5 +183,31 @@ describe("pull request filters menu", () => {
         id: "b c" as ProjectId,
       }),
     );
+  });
+
+  it("labels repositories that share a context root as one project section", () => {
+    const environmentId = "env-1" as EnvironmentId;
+    const view = menu({
+      projects: [
+        {
+          id: "model" as ProjectId,
+          environmentId,
+          title: "Model",
+          workspaceRoot: "/work/freight/model",
+          contextRoot: "/work/freight",
+        },
+        {
+          id: "data" as ProjectId,
+          environmentId,
+          title: "Data",
+          workspaceRoot: "/work/freight/data",
+          contextRoot: "/work/freight",
+        },
+      ],
+    });
+
+    expect(textContent(view)).toContain("freight");
+    expect(textContent(view)).toContain("Model");
+    expect(textContent(view)).toContain("Data");
   });
 });

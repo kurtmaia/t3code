@@ -361,6 +361,31 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("grants the context root as an additional directory beside cwd and attachments", () => {
+    const harness = makeHarness({ cwd: "/work/freight/nam-freight-model" });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const { attachmentsDir } = yield* ServerConfig;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        cwd: "/work/freight/nam-freight-model",
+        contextRoot: "/work/freight",
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.deepEqual(createInput?.options.additionalDirectories, [
+        "/work/freight/nam-freight-model",
+        "/work/freight",
+        attachmentsDir,
+      ]);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("derives auto permission mode from auto runtime policy without skip flag", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

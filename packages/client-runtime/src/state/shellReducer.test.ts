@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { ProjectId, ProviderInstanceId, TaskId, ThreadId } from "@t3tools/contracts";
 import type { OrchestrationShellSnapshot, OrchestrationShellStreamEvent } from "@t3tools/contracts";
 
 import { applyShellStreamEvent } from "./shellReducer.ts";
@@ -9,6 +9,7 @@ const baseSnapshot: OrchestrationShellSnapshot = {
   snapshotSequence: 0,
   projects: [],
   threads: [],
+  tasks: [],
   updatedAt: "2026-04-01T00:00:00.000Z",
 };
 
@@ -43,6 +44,20 @@ const stubThread = {
   hasPendingUserInput: false,
   hasActionableProposedPlan: false,
   session: null,
+} as const;
+
+const stubTask = {
+  id: TaskId.make("task-1"),
+  projectId: ProjectId.make("project-1"),
+  title: "Ship the board",
+  status: "pending",
+  priority: "P2",
+  body: "",
+  labels: [],
+  orderKey: null,
+  createdAt: "2026-04-01T00:00:00.000Z",
+  updatedAt: "2026-04-01T00:00:00.000Z",
+  deletedAt: null,
 } as const;
 
 describe("applyShellStreamEvent", () => {
@@ -181,5 +196,61 @@ describe("applyShellStreamEvent", () => {
     const unknownEvent = { kind: "unknown-future-event", sequence: 99 } as any;
     const next = applyShellStreamEvent(baseSnapshot, unknownEvent);
     expect(next).toBe(baseSnapshot);
+  });
+  describe("task-upserted", () => {
+    it("appends a task the snapshot does not have", () => {
+      const next = applyShellStreamEvent(baseSnapshot, {
+        kind: "task-upserted",
+        sequence: 1,
+        task: stubTask,
+      } satisfies OrchestrationShellStreamEvent);
+      expect(next.tasks).toHaveLength(1);
+      expect(next.snapshotSequence).toBe(1);
+    });
+
+    it("replaces a task it already holds rather than duplicating it", () => {
+      const seeded = applyShellStreamEvent(baseSnapshot, {
+        kind: "task-upserted",
+        sequence: 1,
+        task: stubTask,
+      } satisfies OrchestrationShellStreamEvent);
+      const moved = applyShellStreamEvent(seeded, {
+        kind: "task-upserted",
+        sequence: 2,
+        task: { ...stubTask, status: "running" },
+      } satisfies OrchestrationShellStreamEvent);
+      expect(moved.tasks).toHaveLength(1);
+      expect(moved.tasks[0]?.status).toBe("running");
+    });
+
+    it("ignores an event at or below the snapshot sequence", () => {
+      const seeded = applyShellStreamEvent(baseSnapshot, {
+        kind: "task-upserted",
+        sequence: 5,
+        task: stubTask,
+      } satisfies OrchestrationShellStreamEvent);
+      const stale = applyShellStreamEvent(seeded, {
+        kind: "task-upserted",
+        sequence: 5,
+        task: { ...stubTask, status: "done" },
+      } satisfies OrchestrationShellStreamEvent);
+      expect(stale).toBe(seeded);
+    });
+  });
+
+  describe("task-removed", () => {
+    it("drops the task from the board", () => {
+      const seeded = applyShellStreamEvent(baseSnapshot, {
+        kind: "task-upserted",
+        sequence: 1,
+        task: stubTask,
+      } satisfies OrchestrationShellStreamEvent);
+      const removed = applyShellStreamEvent(seeded, {
+        kind: "task-removed",
+        sequence: 2,
+        taskId: stubTask.id,
+      } satisfies OrchestrationShellStreamEvent);
+      expect(removed.tasks).toHaveLength(0);
+    });
   });
 });

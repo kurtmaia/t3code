@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentProject,
+  EnvironmentTask,
   EnvironmentThread,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
@@ -17,11 +18,11 @@ import type {
   ScopedThreadRef,
   ServerConfig,
 } from "@t3tools/contracts";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 import { useMemo } from "react";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { environmentProjects } from "./projects";
+import { environmentProjects, environmentTasks } from "./projects";
 import { environmentServerConfigsAtom } from "./server";
 import { allEnvironmentShellsBootstrappedAtom } from "./shell";
 import { environmentThreadDetails, environmentThreadShells } from "./threads";
@@ -110,6 +111,10 @@ export function useEnvironmentThreadRefs(
 
 export function useProjects(): ReadonlyArray<EnvironmentProject> {
   return useAtomValue(environmentProjects.projectsAtom);
+}
+
+export function useTasks(): ReadonlyArray<EnvironmentTask> {
+  return useAtomValue(environmentTasks.tasksAtom);
 }
 
 export function useServerConfigs(): ReadonlyMap<EnvironmentId, ServerConfig> {
@@ -239,6 +244,21 @@ export function readEnvironmentSupportsSnooze(environmentId: EnvironmentId): boo
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
       .threadSnooze === true
   );
+}
+
+/** Tasks on one project, read synchronously for menu construction. */
+export function readTasksForProject(input: {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+}): ReadonlyArray<EnvironmentTask> {
+  return appAtomRegistry
+    .get(environmentTasks.tasksAtom)
+    .filter(
+      (task) =>
+        task.environmentId === input.environmentId &&
+        task.projectId === input.projectId &&
+        task.deletedAt === null,
+    );
 }
 
 /** Whether the environment's server understands thread.pin/unpin.

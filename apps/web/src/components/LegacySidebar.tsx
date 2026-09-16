@@ -176,6 +176,7 @@ import {
   isContextMenuPointerDown,
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
+  nestSubThreadsInSidebarList,
   resolveProjectStatusIndicator,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
@@ -186,6 +187,7 @@ import {
   ThreadStatusPill,
 } from "./Sidebar.logic";
 import { sortThreads } from "../lib/threadSort";
+import { cn } from "~/lib/utils";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useIsMobile } from "~/hooks/useMediaQuery";
@@ -301,8 +303,11 @@ function buildThreadJumpLabelMap(input: {
   return mapping.size > 0 ? mapping : EMPTY_THREAD_JUMP_LABELS;
 }
 
+const EMPTY_NESTED_THREAD_KEYS: ReadonlySet<string> = new Set();
+
 interface SidebarThreadRowProps {
   thread: SidebarThreadSummary;
+  nested: boolean;
   projectCwd: string | null;
   orderedProjectThreadKeys: readonly string[];
   isActive: boolean;
@@ -346,6 +351,7 @@ interface SidebarThreadRowProps {
 
 export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
   const {
+    nested,
     orderedProjectThreadKeys,
     isActive,
     openPullRequestsInRightPanel,
@@ -671,7 +677,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
 
   return (
     <SidebarMenuSubItem
-      className="w-full"
+      className={cn("w-full", nested && "ml-3 border-l border-sidebar-border/60 pl-1.5")}
       data-thread-item
       onMouseLeave={handleMouseLeave}
       onBlurCapture={handleBlurCapture}
@@ -897,6 +903,7 @@ interface SidebarProjectThreadListProps {
   hiddenThreadStatus: ThreadStatusPill | null;
   orderedProjectThreadKeys: readonly string[];
   renderedThreads: readonly SidebarThreadSummary[];
+  nestedThreadKeys: ReadonlySet<string>;
   showEmptyThreadState: boolean;
   shouldShowThreadPanel: boolean;
   isThreadListExpanded: boolean;
@@ -953,6 +960,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     hiddenThreadStatus,
     orderedProjectThreadKeys,
     renderedThreads,
+    nestedThreadKeys,
     showEmptyThreadState,
     shouldShowThreadPanel,
     isThreadListExpanded,
@@ -1008,6 +1016,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
             <SidebarThreadRow
               key={threadKey}
               thread={thread}
+              nested={nestedThreadKeys.has(threadKey)}
               projectCwd={projectCwd}
               orderedProjectThreadKeys={orderedProjectThreadKeys}
               isActive={activeRouteThreadKey === threadKey}
@@ -1258,39 +1267,45 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     return counts;
   }, [memberProjectByScopedKey, project.memberProjects, projectThreads]);
 
-  const { projectStatus, visibleProjectThreads, orderedProjectThreadKeys } = useMemo(() => {
-    const lastVisitedAtByThreadKey = new Map(
-      projectThreads.map((thread, index) => [
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-        threadLastVisitedAts[index] ?? null,
-      ]),
-    );
-    const resolveProjectThreadStatus = (thread: SidebarThreadSummary) => {
-      const lastVisitedAt = lastVisitedAtByThreadKey.get(
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+  const { projectStatus, visibleProjectThreads, orderedProjectThreadKeys, nestedThreadKeys } =
+    useMemo(() => {
+      const lastVisitedAtByThreadKey = new Map(
+        projectThreads.map((thread, index) => [
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+          threadLastVisitedAts[index] ?? null,
+        ]),
       );
-      return resolveThreadStatusPill({
-        thread: {
-          ...thread,
-          ...(lastVisitedAt !== null && lastVisitedAt !== undefined ? { lastVisitedAt } : {}),
-        },
-      });
-    };
-    const visibleProjectThreads = sortThreads(
-      projectThreads.filter((thread) => thread.archivedAt === null),
-      threadSortOrder,
-    );
-    const projectStatus = resolveProjectStatusIndicator(
-      visibleProjectThreads.map((thread) => resolveProjectThreadStatus(thread)),
-    );
-    return {
-      orderedProjectThreadKeys: visibleProjectThreads.map((thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      ),
-      projectStatus,
-      visibleProjectThreads,
-    };
-  }, [projectThreads, threadLastVisitedAts, threadSortOrder]);
+      const resolveProjectThreadStatus = (thread: SidebarThreadSummary) => {
+        const lastVisitedAt = lastVisitedAtByThreadKey.get(
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        );
+        return resolveThreadStatusPill({
+          thread: {
+            ...thread,
+            ...(lastVisitedAt !== null && lastVisitedAt !== undefined ? { lastVisitedAt } : {}),
+          },
+        });
+      };
+      // Sub-threads sit directly under their parent; orphans stay top-level.
+      const nested = nestSubThreadsInSidebarList(
+        sortThreads(
+          projectThreads.filter((thread) => thread.archivedAt === null),
+          threadSortOrder,
+        ),
+      );
+      const visibleProjectThreads = nested.ordered;
+      const projectStatus = resolveProjectStatusIndicator(
+        visibleProjectThreads.map((thread) => resolveProjectThreadStatus(thread)),
+      );
+      return {
+        orderedProjectThreadKeys: visibleProjectThreads.map((thread) =>
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        ),
+        projectStatus,
+        visibleProjectThreads,
+        nestedThreadKeys: nested.nestedKeys,
+      };
+    }, [projectThreads, threadLastVisitedAts, threadSortOrder]);
   const pinnedCollapsedThread = useMemo(() => {
     const activeThreadKey = activeRouteThreadKey ?? undefined;
     if (!activeThreadKey || projectExpanded) {
@@ -1308,6 +1323,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     hasOverflowingThreads,
     hiddenThreadStatus,
     renderedThreads,
+    renderedNestedThreadKeys,
     showEmptyThreadState,
     shouldShowThreadPanel,
   } = useMemo(() => {
@@ -1353,11 +1369,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         hiddenThreads.map((thread) => resolveProjectThreadStatus(thread)),
       ),
       renderedThreads,
+      // A collapsed project shows only the active row, so nothing indents.
+      renderedNestedThreadKeys: pinnedCollapsedThread ? EMPTY_NESTED_THREAD_KEYS : nestedThreadKeys,
       showEmptyThreadState: projectExpanded && visibleProjectThreads.length === 0,
       shouldShowThreadPanel: projectExpanded || pinnedCollapsedThread !== null,
     };
   }, [
     isThreadListExpanded,
+    nestedThreadKeys,
     pinnedCollapsedThread,
     projectExpanded,
     projectThreads,
@@ -2358,6 +2377,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         hiddenThreadStatus={hiddenThreadStatus}
         orderedProjectThreadKeys={orderedProjectThreadKeys}
         renderedThreads={renderedThreads}
+        nestedThreadKeys={renderedNestedThreadKeys}
         showEmptyThreadState={showEmptyThreadState}
         shouldShowThreadPanel={shouldShowThreadPanel}
         isThreadListExpanded={isThreadListExpanded}
@@ -3336,12 +3356,14 @@ export default function LegacySidebar() {
   const visibleSidebarThreadKeys = useMemo(
     () =>
       sortedProjects.flatMap((project) => {
-        const projectThreads = sortThreads(
-          (threadsByProjectKey.get(project.projectKey) ?? []).filter(
-            (thread) => thread.archivedAt === null,
+        const projectThreads = nestSubThreadsInSidebarList(
+          sortThreads(
+            (threadsByProjectKey.get(project.projectKey) ?? []).filter(
+              (thread) => thread.archivedAt === null,
+            ),
+            sidebarThreadSortOrder,
           ),
-          sidebarThreadSortOrder,
-        );
+        ).ordered;
         const projectExpanded = resolveProjectExpanded(
           projectExpandedById,
           projectExpansionPreferenceKeys(project),

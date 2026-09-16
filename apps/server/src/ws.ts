@@ -46,10 +46,13 @@ import {
   type ServerSelfUpdateProgressEvent,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
+  type FilesystemDiscoverRepositoriesFailure,
+  FilesystemDiscoverRepositoriesError,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   RpcClientId,
   EnvironmentAuthorizationError,
+  TaskId,
   ThreadId,
   type TerminalAttachStreamEvent,
   type TerminalError,
@@ -200,6 +203,19 @@ function projectEntriesFailureContext(error: WorkspaceEntries.WorkspaceEntriesEr
         normalizedCwd: error.cwd,
         detail: error.reason,
       };
+    default:
+      return unexpectedCompatibilityError(error);
+  }
+}
+
+function filesystemDiscoverRepositoriesFailure(
+  error: WorkspaceEntries.WorkspaceEntriesDiscoverRepositoriesError,
+): { readonly failure: FilesystemDiscoverRepositoriesFailure; readonly platform?: string } {
+  switch (error._tag) {
+    case "WorkspaceEntriesWindowsPathUnsupportedError":
+      return { failure: "windows_path_unsupported", platform: error.platform };
+    case "WorkspaceEntriesReadDirectoryError":
+      return { failure: "read_directory_failed" };
     default:
       return unexpectedCompatibilityError(error);
   }
@@ -558,6 +574,20 @@ const makeWsRpcLayer = (
                 projectId: event.payload.projectId,
               }),
             );
+          case "task.created":
+          case "task.meta-updated":
+          case "task.import-reconciled":
+          case "task.status-changed":
+          case "task.reordered":
+            return taskUpsertOrRemove(event.payload.taskId, event.sequence);
+          case "task.deleted":
+            return Effect.succeed(
+              Option.some({
+                kind: "task-removed" as const,
+                sequence: event.sequence,
+                taskId: event.payload.taskId,
+              }),
+            );
           case "thread.deleted":
           case "thread.archived":
             return Effect.succeed(
@@ -583,7 +613,7 @@ const makeWsRpcLayer = (
       // If both attempts fail, log and drop the stream item; treating an error as
       // a missing row would incorrectly remove a still-active aggregate.
       const retryShellProjectionRead = <A, E>(
-        aggregateKind: "project" | "thread",
+        aggregateKind: "project" | "task" | "thread",
         aggregateId: string,
         read: Effect.Effect<A, E>,
       ): Effect.Effect<Option.Option<A>, never, never> =>
@@ -662,6 +692,33 @@ const makeWsRpcLayer = (
                     kind: "thread-upserted" as const,
                     sequence,
                     thread: nextThread,
+                  }),
+              }),
+            ),
+          ),
+        );
+
+      // Same refetch-or-remove shape as threads: a task whose projection row is
+      // gone (or tombstoned) tells the board to drop the card.
+      const taskUpsertOrRemove = (
+        taskId: TaskId,
+        sequence: number,
+      ): Effect.Effect<Option.Option<OrchestrationShellStreamEvent>, never, never> =>
+        retryShellProjectionRead("task", taskId, projectionSnapshotQuery.getTaskById(taskId)).pipe(
+          Effect.map(
+            Option.flatMap((task) =>
+              Option.match(task, {
+                onNone: () =>
+                  Option.some<OrchestrationShellStreamEvent>({
+                    kind: "task-removed" as const,
+                    sequence,
+                    taskId,
+                  }),
+                onSome: (nextTask) =>
+                  Option.some<OrchestrationShellStreamEvent>({
+                    kind: "task-upserted" as const,
+                    sequence,
+                    task: nextTask,
                   }),
               }),
             ),
@@ -1848,6 +1905,21 @@ const makeWsRpcLayer = (
                   new FilesystemBrowseError({
                     ...input,
                     ...filesystemBrowseFailureContext(cause),
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.filesystemDiscoverRepositories]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.filesystemDiscoverRepositories,
+            workspaceEntries.discoverRepositories(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new FilesystemDiscoverRepositoriesError({
+                    path: input.path,
+                    ...filesystemDiscoverRepositoriesFailure(cause),
                     cause,
                   }),
               ),

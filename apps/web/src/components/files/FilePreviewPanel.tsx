@@ -24,9 +24,11 @@ import { useRemoteOpenState } from "~/remoteOpen";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
+import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { DIFF_SURFACE_THEME_UNSAFE_CSS, resolveDiffThemeName } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
+import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "~/rightPanelLayout";
 import { resolvePathLinkTarget } from "~/terminal-links";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Toggle } from "~/components/ui/toggle";
@@ -783,11 +785,17 @@ export default function FilePreviewPanel({
   const isImage = relativePath !== null && isWorkspaceImagePreviewPath(relativePath);
   const file = useProjectFileQuery(environmentId, cwd, relativePath, !isImage);
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
+  // Below this width the panel is a sheet, and the tree's 16rem floor would
+  // leave the file a strip too narrow to read. There it replaces the file
+  // instead of flanking it, which is what the tree already does with no file open.
+  const narrowPanel = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   // Reading markdown rendered is a preference, not a property of one file. Keeping
   // it on the panel meant a thread switch dropped it and forced source back.
+  // Markdown opens rendered because that is how it is meant to be read; the toggle
+  // persists an explicit choice, so anyone who picked source keeps source.
   const [renderMarkdownPreferred, setRenderMarkdownPreferred] = useLocalStorage(
     RENDER_MARKDOWN_STORAGE_KEY,
-    false,
+    true,
     Schema.Boolean,
   );
   // Paired with the path on purpose: each file surface counts its reveals from
@@ -797,6 +805,7 @@ export default function FilePreviewPanel({
     null,
   );
   const breadcrumbRef = useRef<HTMLDivElement>(null);
+  const explorerReplacesFile = narrowPanel && explorerOpen && relativePath !== null;
   const isMarkdown = relativePath ? isMarkdownPreviewFile(relativePath) : false;
   // A reveal still wins over the preference: the line only exists in the source.
   const renderMarkdown =
@@ -819,6 +828,17 @@ export default function FilePreviewPanel({
     );
     currentCrumb?.scrollIntoView({ block: "nearest", inline: "end" });
   }, [relativePath]);
+
+  // The tree covers the file on a narrow panel, so picking a file has to close
+  // it. Left open, the tap would look like it did nothing. Deliberately not
+  // persisted: this follows from the width, it is not a stated preference.
+  const handleOpenFile = useCallback(
+    (nextRelativePath: string) => {
+      if (narrowPanel) setExplorerOpen(false);
+      onOpenFile(nextRelativePath);
+    },
+    [narrowPanel, onOpenFile],
+  );
 
   const toggleExplorer = () => {
     setExplorerOpen((current) => {
@@ -991,7 +1011,7 @@ export default function FilePreviewPanel({
         <div
           className={cn(
             "min-w-0 flex-1 flex-col overflow-hidden",
-            relativePath ? "flex" : "hidden",
+            relativePath && !explorerReplacesFile ? "flex" : "hidden",
           )}
         >
           {relativePath && isImage && absolutePath ? (
@@ -1067,7 +1087,7 @@ export default function FilePreviewPanel({
           <aside
             className={cn(
               "flex min-h-0 shrink-0 bg-background",
-              relativePath
+              relativePath && !explorerReplacesFile
                 ? "w-[min(22rem,46%)] min-w-64 border-l border-border/60"
                 : "min-w-0 flex-1",
             )}
@@ -1079,7 +1099,7 @@ export default function FilePreviewPanel({
               projectName={projectName}
               selectedPath={relativePath}
               selectedPathRevealId={revealRequestId}
-              onOpenFile={onOpenFile}
+              onOpenFile={handleOpenFile}
               {...(relativePath && !isImage ? { onRefreshSelectedFile: file.refresh } : {})}
             />
           </aside>

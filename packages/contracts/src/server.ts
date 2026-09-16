@@ -85,6 +85,16 @@ export const ServerProviderSlashCommand = Schema.Struct({
 });
 export type ServerProviderSlashCommand = typeof ServerProviderSlashCommand.Type;
 
+// `origin` distinguishes skills the provider discovers through its own
+// native mechanism ("native", the default when absent — every existing
+// producer predates this field) from skills layered in from the shared
+// cross-provider filesystem catalog because the provider has no skill of
+// that name itself ("shared"). The UI uses this to badge cross-provider
+// skills; adapters use it to avoid re-injecting instructions the provider
+// already has natively.
+export const ServerProviderSkillOrigin = Schema.Literals(["native", "shared"]);
+export type ServerProviderSkillOrigin = typeof ServerProviderSkillOrigin.Type;
+
 export const ServerProviderSkill = Schema.Struct({
   name: TrimmedNonEmptyString,
   description: Schema.optional(TrimmedNonEmptyString),
@@ -93,6 +103,7 @@ export const ServerProviderSkill = Schema.Struct({
   enabled: Schema.Boolean,
   displayName: Schema.optional(TrimmedNonEmptyString),
   shortDescription: Schema.optional(TrimmedNonEmptyString),
+  origin: Schema.optional(ServerProviderSkillOrigin),
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 

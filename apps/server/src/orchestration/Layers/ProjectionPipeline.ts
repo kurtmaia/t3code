@@ -40,6 +40,8 @@ import { ProjectionStateRepositoryLive } from "../../persistence/Layers/Projecti
 import { ProjectionThreadActivityRepositoryLive } from "../../persistence/Layers/ProjectionThreadActivities.ts";
 import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/ProjectionThreadMessages.ts";
 import { ProjectionThreadProposedPlanRepositoryLive } from "../../persistence/Layers/ProjectionThreadProposedPlans.ts";
+import { ProjectionTaskRepositoryLive } from "../../persistence/Layers/ProjectionTasks.ts";
+import { ProjectionTaskRepository } from "../../persistence/Services/ProjectionTasks.ts";
 import { ProjectionThreadSessionRepositoryLive } from "../../persistence/Layers/ProjectionThreadSessions.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { ProjectionThreadRepositoryLive } from "../../persistence/Layers/ProjectionThreads.ts";
@@ -65,6 +67,7 @@ export const ORCHESTRATION_PROJECTOR_NAMES = {
   threadTurns: "projection.thread-turns",
   checkpoints: "projection.checkpoints",
   pendingApprovals: "projection.pending-approvals",
+  tasks: "projection.tasks",
 } as const;
 
 type ProjectorName =
@@ -480,6 +483,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const projectionThreadSessionRepository = yield* ProjectionThreadSessionRepository;
     const projectionTurnRepository = yield* ProjectionTurnRepository;
     const projectionPendingApprovalRepository = yield* ProjectionPendingApprovalRepository;
+    const projectionTaskRepository = yield* ProjectionTaskRepository;
 
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -497,6 +501,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             defaultModelSelection: event.payload.defaultModelSelection,
             defaultThreadEnvMode: null,
             faviconPath: event.payload.faviconPath ?? null,
+            contextRoot: event.payload.contextRoot ?? null,
+            remote: event.payload.remote ?? null,
             scripts: event.payload.scripts,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
@@ -526,6 +532,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...(event.payload.faviconPath !== undefined
               ? { faviconPath: event.payload.faviconPath }
               : {}),
+            ...(event.payload.contextRoot !== undefined
+              ? { contextRoot: event.payload.contextRoot }
+              : {}),
+            ...(event.payload.remote !== undefined ? { remote: event.payload.remote } : {}),
             ...(event.payload.scripts !== undefined ? { scripts: event.payload.scripts } : {}),
             updatedAt: event.payload.updatedAt,
           });
@@ -611,6 +621,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             interactionMode: event.payload.interactionMode,
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,
+            taskId: event.payload.taskId ?? null,
+            parentThreadId: event.payload.parentThreadId ?? null,
+            sourceQuote: event.payload.sourceQuote ?? null,
             latestTurnId: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
@@ -799,6 +812,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...(event.payload.worktreePath !== undefined
               ? { worktreePath: event.payload.worktreePath }
               : {}),
+            ...(event.payload.taskId !== undefined ? { taskId: event.payload.taskId } : {}),
             updatedAt: event.payload.updatedAt,
           });
           return;
@@ -1606,6 +1620,130 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       }
     });
 
+    const applyTasksProjection: ProjectorDefinition["apply"] = Effect.fn("applyTasksProjection")(
+      function* (event, _attachmentSideEffects) {
+        switch (event.type) {
+          case "task.created":
+            yield* projectionTaskRepository.upsert({
+              taskId: event.payload.taskId,
+              projectId: event.payload.projectId,
+              title: event.payload.title,
+              status: event.payload.status,
+              priority: event.payload.priority,
+              body: event.payload.body,
+              labels: event.payload.labels,
+              orderKey: event.payload.orderKey,
+              branch: event.payload.branch ?? null,
+              worktreePath: event.payload.worktreePath ?? null,
+              planMarkdown: event.payload.planMarkdown ?? null,
+              source: event.payload.source ?? null,
+              externalId: event.payload.externalId ?? null,
+              createdAt: event.payload.createdAt,
+              updatedAt: event.payload.updatedAt,
+              deletedAt: null,
+            });
+            return;
+
+          case "task.meta-updated": {
+            const existingRow = yield* projectionTaskRepository.getById({
+              taskId: event.payload.taskId,
+            });
+            if (Option.isNone(existingRow)) {
+              return;
+            }
+            yield* projectionTaskRepository.upsert({
+              ...existingRow.value,
+              ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
+              ...(event.payload.priority !== undefined ? { priority: event.payload.priority } : {}),
+              ...(event.payload.body !== undefined ? { body: event.payload.body } : {}),
+              ...(event.payload.labels !== undefined ? { labels: event.payload.labels } : {}),
+              ...(event.payload.branch !== undefined ? { branch: event.payload.branch } : {}),
+              ...(event.payload.worktreePath !== undefined
+                ? { worktreePath: event.payload.worktreePath }
+                : {}),
+              ...(event.payload.planMarkdown !== undefined
+                ? { planMarkdown: event.payload.planMarkdown }
+                : {}),
+              updatedAt: event.payload.updatedAt,
+            });
+            return;
+          }
+
+          // Tower is authoritative for the fields it mirrors, so a
+          // reconciliation writes whichever of them the draft carried. The
+          // shape mirrors `task.meta-updated` plus the two fields the board
+          // owns for local tasks, `status` and `orderKey`.
+          case "task.import-reconciled": {
+            const existingRow = yield* projectionTaskRepository.getById({
+              taskId: event.payload.taskId,
+            });
+            if (Option.isNone(existingRow)) {
+              return;
+            }
+            yield* projectionTaskRepository.upsert({
+              ...existingRow.value,
+              ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
+              ...(event.payload.status !== undefined ? { status: event.payload.status } : {}),
+              ...(event.payload.priority !== undefined ? { priority: event.payload.priority } : {}),
+              ...(event.payload.body !== undefined ? { body: event.payload.body } : {}),
+              ...(event.payload.labels !== undefined ? { labels: event.payload.labels } : {}),
+              ...(event.payload.orderKey !== undefined ? { orderKey: event.payload.orderKey } : {}),
+              updatedAt: event.payload.updatedAt,
+            });
+            return;
+          }
+
+          case "task.status-changed": {
+            const existingRow = yield* projectionTaskRepository.getById({
+              taskId: event.payload.taskId,
+            });
+            if (Option.isNone(existingRow)) {
+              return;
+            }
+            yield* projectionTaskRepository.upsert({
+              ...existingRow.value,
+              status: event.payload.status,
+              updatedAt: event.payload.updatedAt,
+            });
+            return;
+          }
+
+          case "task.reordered": {
+            const existingRow = yield* projectionTaskRepository.getById({
+              taskId: event.payload.taskId,
+            });
+            if (Option.isNone(existingRow)) {
+              return;
+            }
+            yield* projectionTaskRepository.upsert({
+              ...existingRow.value,
+              orderKey: event.payload.orderKey,
+              updatedAt: event.payload.updatedAt,
+            });
+            return;
+          }
+
+          case "task.deleted": {
+            const existingRow = yield* projectionTaskRepository.getById({
+              taskId: event.payload.taskId,
+            });
+            if (Option.isNone(existingRow)) {
+              return;
+            }
+            yield* projectionTaskRepository.upsert({
+              ...existingRow.value,
+              deletedAt: event.payload.deletedAt,
+              updatedAt: event.payload.deletedAt,
+            });
+            return;
+          }
+
+          default:
+            return;
+        }
+      },
+    );
+
     const projectors: ReadonlyArray<ProjectorDefinition> = [
       {
         name: ORCHESTRATION_PROJECTOR_NAMES.projects,
@@ -1642,6 +1780,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       {
         name: ORCHESTRATION_PROJECTOR_NAMES.threads,
         apply: applyThreadsProjection,
+      },
+      {
+        name: ORCHESTRATION_PROJECTOR_NAMES.tasks,
+        apply: applyTasksProjection,
       },
     ];
 
@@ -1741,6 +1883,7 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   Layer.provideMerge(ProjectionThreadRepositoryLive),
   Layer.provideMerge(ProjectionThreadMessageRepositoryLive),
   Layer.provideMerge(ProjectionThreadProposedPlanRepositoryLive),
+  Layer.provideMerge(ProjectionTaskRepositoryLive),
   Layer.provideMerge(ProjectionThreadActivityRepositoryLive),
   Layer.provideMerge(ProjectionThreadSessionRepositoryLive),
   Layer.provideMerge(ProjectionTurnRepositoryLive),

@@ -79,6 +79,18 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
           ),
         );
 
+    // A context root is an existing directory the project sits under; it is never created
+    // on the project's behalf. Null and absent pass through untouched so a clear stays a clear.
+    //
+    // A `remote` binding is deliberately absent from this function. Its `remotePath` lives on
+    // another machine, so resolving it against this host's cwd or expanding `~` to this host's
+    // HOME would silently produce a path that does not exist there. It rides through on the
+    // command spread untouched.
+    const normalizeProjectContextRoot = (contextRoot: string | null | undefined) =>
+      typeof contextRoot === "string"
+        ? normalizeProjectWorkspaceRoot(contextRoot)
+        : Effect.succeed(contextRoot);
+
     if (canonicalCommand.type === "project.create") {
       return {
         ...canonicalCommand,
@@ -87,16 +99,24 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
           canonicalCommand.createWorkspaceRootIfMissing,
         ),
         createWorkspaceRootIfMissing: canonicalCommand.createWorkspaceRootIfMissing === true,
+        ...(canonicalCommand.contextRoot !== undefined
+          ? { contextRoot: yield* normalizeProjectContextRoot(canonicalCommand.contextRoot) }
+          : {}),
       } satisfies OrchestrationCommand;
     }
 
     if (
       canonicalCommand.type === "project.meta.update" &&
-      canonicalCommand.workspaceRoot !== undefined
+      (canonicalCommand.workspaceRoot !== undefined || canonicalCommand.contextRoot !== undefined)
     ) {
       return {
         ...canonicalCommand,
-        workspaceRoot: yield* normalizeProjectWorkspaceRoot(canonicalCommand.workspaceRoot),
+        ...(canonicalCommand.workspaceRoot !== undefined
+          ? { workspaceRoot: yield* normalizeProjectWorkspaceRoot(canonicalCommand.workspaceRoot) }
+          : {}),
+        ...(canonicalCommand.contextRoot !== undefined
+          ? { contextRoot: yield* normalizeProjectContextRoot(canonicalCommand.contextRoot) }
+          : {}),
       } satisfies OrchestrationCommand;
     }
 

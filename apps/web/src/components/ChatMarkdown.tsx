@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   CheckIcon,
   ChevronRightIcon,
+  CodeIcon,
   CopyIcon,
   GlobeIcon,
   InfoIcon,
@@ -9,6 +10,7 @@ import {
   Maximize2Icon,
   MessageSquareWarningIcon,
   Minimize2Icon,
+  NetworkIcon,
   OctagonAlertIcon,
   TriangleAlertIcon,
   WrapTextIcon,
@@ -27,6 +29,7 @@ import React, {
   type ClipboardEvent as ReactClipboardEvent,
   type MouseEvent as ReactMouseEvent,
   isValidElement,
+  lazy,
   use,
   useCallback,
   memo,
@@ -39,12 +42,16 @@ import React, {
 import type { Components, Options as ReactMarkdownOptions } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import { defaultUrlTransform } from "react-markdown";
+import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import "katex/dist/katex.min.css";
 import { remarkGithubAlerts } from "../markdown-github-alerts";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
+import { canToggleMermaidFenceView, mermaidFenceView } from "./chat/mermaidFence";
 import { CHAT_FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import {
@@ -189,27 +196,50 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   },
 } satisfies Parameters<typeof rehypeSanitize>[0];
 
-const CHAT_MARKDOWN_REMARK_PLUGINS = [
+// Annotated rather than inferred because these are exported: the inferred type
+// reaches into plugin-internal types that cannot be named from here.
+export const CHAT_MARKDOWN_REMARK_PLUGINS: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = [
   remarkGfm,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
+  remarkMath,
   remarkPreserveCodeMeta,
   remarkTagInlineCode,
-] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
+];
 
 const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkGfm,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkBreaks,
+  remarkMath,
   remarkPreserveCodeMeta,
   remarkTagInlineCode,
 ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 
-const CHAT_MARKDOWN_REHYPE_PLUGINS = [
+const CHAT_MARKDOWN_KATEX_PLUGIN: NonNullable<ReactMarkdownOptions["rehypePlugins"]>[number] = [
+  rehypeKatex,
+  {
+    // A streaming message routinely holds half an expression, and a thrown
+    // error would blank the whole message. KaTeX renders the offending source
+    // in red instead, which reads as "still typing" rather than "broken".
+    throwOnError: false,
+    strict: false,
+  },
+];
+
+export const CHAT_MARKDOWN_REHYPE_PLUGINS: NonNullable<ReactMarkdownOptions["rehypePlugins"]> = [
   rehypeRaw,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
-] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+  // After the sanitizer on purpose: it would strip KaTeX's generated markup.
+  // Safe in that order because KaTeX builds its output from the math node's
+  // source text and escapes it, rather than passing author HTML through.
+  CHAT_MARKDOWN_KATEX_PLUGIN,
+];
+
+/** Math still has to render in the common path, which does not parse raw HTML. */
+export const CHAT_MARKDOWN_MATH_REHYPE_PLUGINS: NonNullable<ReactMarkdownOptions["rehypePlugins"]> =
+  [CHAT_MARKDOWN_KATEX_PLUGIN];
 
 /** GitHub's own five alert kinds, in its colors: the glyph names the urgency, the title says it. */
 const GITHUB_ALERT_PRESENTATIONS: Record<
@@ -617,12 +647,15 @@ function MarkdownCodeBlock({
   language,
   fenceTitle,
   theme,
+  viewToggle,
   children,
 }: {
   code: string;
   language: string;
   fenceTitle: string | null;
   theme: "light" | "dark";
+  /** Leading action for fences with more than one presentation, e.g. mermaid. */
+  viewToggle?: ReactNode;
   children: ReactNode;
 }) {
   const [copied, setCopied] = useState(false);
@@ -684,6 +717,7 @@ function MarkdownCodeBlock({
           />
         </span>
         <span className="flex items-center gap-0.5" role="toolbar" aria-label="Code block actions">
+          {viewToggle}
           <Tooltip>
             <TooltipTrigger
               render={
@@ -723,6 +757,73 @@ function MarkdownCodeBlock({
       </div>
       {children}
     </div>
+  );
+}
+
+const MERMAID_FENCE_LANGUAGE = "mermaid";
+
+const MermaidDiagram = lazy(() => import("./chat/MermaidDiagram"));
+
+/** A ```mermaid fence, shown as a diagram with its source one tap away. */
+function MarkdownMermaidBlock({
+  code,
+  fenceTitle,
+  theme,
+  isStreaming,
+  sourceBlock,
+}: {
+  code: string;
+  fenceTitle: string | null;
+  theme: "light" | "dark";
+  isStreaming: boolean;
+  sourceBlock: ReactNode;
+}) {
+  const [sourceRequested, setSourceRequested] = useState(false);
+  const [failedCode, setFailedCode] = useState<string | null>(null);
+  const fenceState = { code, isStreaming, sourceRequested, failedCode };
+  const handleRenderError = useCallback(() => setFailedCode(code), [code]);
+
+  const showsDiagram = mermaidFenceView(fenceState) === "diagram";
+  const toggleLabel = showsDiagram ? "Show diagram source" : "Show diagram";
+  const viewToggle = !canToggleMermaidFenceView(fenceState) ? null : (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="chat-markdown-chrome-action"
+            aria-pressed={showsDiagram}
+            onClick={() => setSourceRequested((value) => !value)}
+            aria-label={toggleLabel}
+          />
+        }
+      >
+        {showsDiagram ? <CodeIcon className="size-3" /> : <NetworkIcon className="size-3" />}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{toggleLabel}</TooltipPopup>
+    </Tooltip>
+  );
+
+  return (
+    <MarkdownCodeBlock
+      code={code}
+      language={MERMAID_FENCE_LANGUAGE}
+      fenceTitle={fenceTitle}
+      theme={theme}
+      viewToggle={viewToggle}
+    >
+      {showsDiagram ? (
+        <RenderErrorBoundary fallback={sourceBlock}>
+          <Suspense fallback={sourceBlock}>
+            <MermaidDiagram code={code} theme={theme} onRenderError={handleRenderError} />
+          </Suspense>
+        </RenderErrorBoundary>
+      ) : (
+        sourceBlock
+      )}
+    </MarkdownCodeBlock>
   );
 }
 
@@ -1743,6 +1844,29 @@ function ChatMarkdown({
 
         const language = extractFenceLanguage(codeBlock.className);
         const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
+        const sourceBlock = (
+          <RenderErrorBoundary fallback={<pre {...props}>{children}</pre>}>
+            <Suspense fallback={<pre {...props}>{children}</pre>}>
+              <SuspenseShikiCodeBlock
+                className={codeBlock.className}
+                code={codeBlock.code}
+                themeName={diffThemeName}
+                isStreaming={isStreaming}
+              />
+            </Suspense>
+          </RenderErrorBoundary>
+        );
+        if (language === MERMAID_FENCE_LANGUAGE) {
+          return (
+            <MarkdownMermaidBlock
+              code={codeBlock.code}
+              fenceTitle={fenceTitle}
+              theme={resolvedTheme}
+              isStreaming={isStreaming}
+              sourceBlock={sourceBlock}
+            />
+          );
+        }
         return (
           <MarkdownCodeBlock
             code={codeBlock.code}
@@ -1750,16 +1874,7 @@ function ChatMarkdown({
             fenceTitle={fenceTitle}
             theme={resolvedTheme}
           >
-            <RenderErrorBoundary fallback={<pre {...props}>{children}</pre>}>
-              <Suspense fallback={<pre {...props}>{children}</pre>}>
-                <SuspenseShikiCodeBlock
-                  className={codeBlock.className}
-                  code={codeBlock.code}
-                  themeName={diffThemeName}
-                  isStreaming={isStreaming}
-                />
-              </Suspense>
-            </RenderErrorBoundary>
+            {sourceBlock}
           </MarkdownCodeBlock>
         );
       },
@@ -1798,7 +1913,9 @@ function ChatMarkdown({
         remarkPlugins={
           lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS
         }
-        rehypePlugins={parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : undefined}
+        rehypePlugins={
+          parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : CHAT_MARKDOWN_MATH_REHYPE_PLUGINS
+        }
         skipHtml={false}
         components={markdownComponents}
         urlTransform={markdownUrlTransform}

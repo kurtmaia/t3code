@@ -204,9 +204,10 @@ Logged in to gitlab.com as gitlab-user
       }
       if (
         input.command === "az" &&
-        input.args.join(" ") === "account show --query user.name -o tsv"
+        input.args.join(" ") ===
+          "devops project list --detect false --query value[0].name -o tsv --only-show-errors"
       ) {
-        return Effect.succeed(processOutput("azure-user@example.com\n"));
+        return Effect.succeed(processOutput("platform\n"));
       }
       return Effect.fail(
         new VcsProcessSpawnError({
@@ -267,8 +268,9 @@ Logged in to gitlab.com as gitlab-user
         },
         {
           kind: "azure-devops",
+          // A PAT names nobody, so the probe reports reachability rather than an account.
           auth: "authenticated",
-          account: Option.some("azure-user@example.com"),
+          account: Option.none(),
           detail: Option.none(),
         },
         {

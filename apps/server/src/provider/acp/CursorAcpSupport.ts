@@ -13,7 +13,8 @@ import {
 } from "../Layers/CursorProvider.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
-type CursorAcpRuntimeCursorSettings = Pick<CursorSettings, "apiEndpoint" | "binaryPath">;
+type CursorAcpRuntimeCursorSettings = Pick<CursorSettings, "binaryPath"> &
+  Partial<Pick<CursorSettings, "apiEndpoint">>;
 
 export interface CursorAcpRuntimeInput extends Omit<
   AcpSessionRuntime.AcpSessionRuntimeOptions,
@@ -60,6 +61,39 @@ export const makeCursorAcpRuntime = (
         spawn: buildCursorAcpSpawnInput(input.cursorSettings, input.cwd, input.environment),
         authMethodId: "cursor_login",
         clientCapabilities: CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES,
+      }).pipe(
+        Layer.provide(
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),
+        ),
+      ),
+    );
+    return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
+      Effect.provide(acpContext),
+    );
+  });
+
+/**
+ * GitHub Copilot exposes the same standard ACP session surface as Cursor,
+ * but starts with `copilot --acp` and advertises its own auth method.
+ */
+export const makeCopilotAcpRuntime = (
+  input: CursorAcpRuntimeInput,
+): Effect.Effect<
+  AcpSessionRuntime.AcpSessionRuntime["Service"],
+  EffectAcpErrors.AcpError,
+  Crypto.Crypto | Scope.Scope
+> =>
+  Effect.gen(function* () {
+    const acpContext = yield* Layer.build(
+      AcpSessionRuntime.layer({
+        ...input,
+        spawn: {
+          command: input.cursorSettings?.binaryPath || "copilot",
+          args: ["--acp"],
+          cwd: input.cwd,
+          ...(input.environment ? { env: input.environment } : {}),
+        },
+        authMethodId: "copilot-login",
       }).pipe(
         Layer.provide(
           Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),

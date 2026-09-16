@@ -51,6 +51,11 @@ export type RespondToThreadApprovalInput = CommandInput<"thread.approval.respond
 export type RespondToThreadUserInputInput = CommandInput<"thread.user-input.respond">;
 export type RevertThreadCheckpointInput = CommandInput<"thread.checkpoint.revert">;
 export type StopThreadSessionInput = CommandInput<"thread.session.stop">;
+export type CreateTaskInput = CommandInput<"task.create">;
+export type UpdateTaskMetadataInput = CommandInput<"task.meta.update">;
+export type SetTaskStatusInput = CommandInput<"task.status.set">;
+export type ReorderTaskInput = CommandInput<"task.reorder">;
+export type DeleteTaskInput = CommandInput<"task.delete">;
 
 type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
@@ -329,5 +334,57 @@ export const stopThreadSession: (input: StopThreadSessionInput) => CommandEffect
     type: "thread.session.stop",
     commandId: metadata.commandId,
     createdAt: metadata.createdAt,
+  });
+});
+
+export const createTask: (input: CreateTaskInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.createTask",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "task.create",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const updateTaskMetadata: (input: UpdateTaskMetadataInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.updateTaskMetadata",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "task.meta.update",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const setTaskStatus: (input: SetTaskStatusInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.setTaskStatus",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "task.status.set",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const reorderTask: (input: ReorderTaskInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.reorderTask",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "task.reorder",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const deleteTask: (input: DeleteTaskInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.deleteTask",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "task.delete",
+    commandId: yield* commandId(input),
   });
 });

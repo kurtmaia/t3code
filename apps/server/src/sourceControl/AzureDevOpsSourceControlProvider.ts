@@ -12,29 +12,39 @@ import {
   type SourceControlCliDiscoverySpec,
 } from "./SourceControlProviderDiscovery.ts";
 
-function parseAzureAuth(input: SourceControlAuthProbeInput) {
-  const account = input.stdout.trim().split(/\r?\n/)[0]?.trim();
+const AZURE_DEVOPS_HOST = "dev.azure.com";
 
-  if (input.exitCode !== 0) {
-    return providerAuth({
-      status: "unauthenticated",
-      detail:
-        firstSafeAuthLine(combinedAuthOutput(input)) ?? "Run `az login` to authenticate Azure CLI.",
-    });
+/**
+ * The Azure DevOps extension accepts either an AAD token from `az login` or a PAT from
+ * `az devops login`, and picks between them itself. Probing `az account show` would only
+ * ever see the first, reporting a PAT-authenticated server as signed out, so the probe
+ * makes a real Azure DevOps call and lets the extension resolve the credential the same
+ * way every other command in this provider does.
+ */
+function parseAzureAuth(input: SourceControlAuthProbeInput) {
+  const output = combinedAuthOutput(input);
+
+  if (input.exitCode === 0) {
+    return providerAuth({ status: "authenticated", host: AZURE_DEVOPS_HOST });
   }
 
-  if (account !== undefined && account.length > 0) {
+  // Without an organization the CLI stops before it reaches a credential, so this failure
+  // says nothing about whether the server is signed in.
+  if (/--organization must be specified/iu.test(output)) {
     return providerAuth({
-      status: "authenticated",
-      account,
-      host: "dev.azure.com",
+      status: "unknown",
+      host: AZURE_DEVOPS_HOST,
+      detail:
+        "No default Azure DevOps organization is configured on this server, so credentials could not be checked. Set one with `az devops configure --defaults organization=https://dev.azure.com/<org>`.",
     });
   }
 
   return providerAuth({
-    status: "unknown",
-    host: "dev.azure.com",
-    detail: "Azure CLI account status could not be parsed.",
+    status: "unauthenticated",
+    host: AZURE_DEVOPS_HOST,
+    detail:
+      firstSafeAuthLine(output) ??
+      "Run `az devops login` to sign in with a personal access token, or `az login` to use an Entra identity.",
   });
 }
 
@@ -44,7 +54,21 @@ export const discovery = {
   label: "Azure DevOps",
   executable: "az",
   versionArgs: ["--version"],
-  authArgs: ["account", "show", "--query", "user.name", "-o", "tsv"],
+  // Mirrors the shape of a real provider call so the probe exercises the credential the
+  // provider will actually use. `--detect false` keeps it independent of the probe cwd,
+  // which is the server root rather than any project.
+  authArgs: [
+    "devops",
+    "project",
+    "list",
+    "--detect",
+    "false",
+    "--query",
+    "value[0].name",
+    "-o",
+    "tsv",
+    "--only-show-errors",
+  ],
   // `az` boots a fresh Python interpreter on every invocation, so even `az --version`
   // takes ~6s on Windows and overruns the default budget, leaving the provider reported
   // as missing on machines where it is installed. `gh` and `glab` answer in ~0.3s.

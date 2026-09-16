@@ -50,6 +50,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     otlpMetricsUrl: undefined,
     otlpExportIntervalMs: 10_000,
     otlpServiceName: "t3-server",
+    towerTaskImportSyncIntervalMs: 30_000,
     devAllowedOrigins: [],
   } as const;
 

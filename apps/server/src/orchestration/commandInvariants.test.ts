@@ -14,6 +14,8 @@ import * as Effect from "effect/Effect";
 import {
   findThreadById,
   listThreadsByProjectId,
+  requireActiveProjectRemoteBindingAbsent,
+  requireContextRootContainsWorkspaceRoot,
   requireThread,
   requireThreadAbsent,
 } from "./commandInvariants.ts";
@@ -23,6 +25,7 @@ const now = "2026-01-01T00:00:00.000Z";
 const readModel: OrchestrationReadModel = {
   snapshotSequence: 2,
   updatedAt: now,
+  tasks: [],
   projects: [
     {
       id: ProjectId.make("project-a"),
@@ -198,5 +201,118 @@ describe("commandInvariants", () => {
         }),
       ),
     ).rejects.toThrow("already exists");
+  });
+
+  describe("requireContextRootContainsWorkspaceRoot", () => {
+    const contains = (workspaceRoot: string, contextRoot: string) =>
+      Effect.runPromise(
+        requireContextRootContainsWorkspaceRoot({
+          command: messageSendCommand,
+          workspaceRoot,
+          contextRoot,
+        }).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        ),
+      );
+
+    it("accepts an ancestor, the root itself, and trailing separators", async () => {
+      expect(await contains("/work/freight/nam-freight-model", "/work/freight")).toBe(true);
+      expect(await contains("/work/freight", "/work/freight")).toBe(true);
+      expect(await contains("/work/freight/", "/work/freight/")).toBe(true);
+      expect(await contains("/work/freight/a/b/c", "/work")).toBe(true);
+    });
+
+    it("rejects siblings and prefix look-alikes", async () => {
+      expect(await contains("/work/pricing/api", "/work/freight")).toBe(false);
+      // `/a/bc` starts with `/a/b` as a string but is not inside it as a path.
+      expect(await contains("/work/freight-archive", "/work/freight")).toBe(false);
+      expect(await contains("/work", "/work/freight")).toBe(false);
+    });
+
+    it("compares Windows paths case-insensitively with backslashes", async () => {
+      expect(await contains("C:\\Work\\Freight\\model", "c:/work/freight")).toBe(true);
+      expect(await contains("C:\\Work\\Pricing", "C:\\Work\\Freight")).toBe(false);
+    });
+  });
+  describe("requireActiveProjectRemoteBindingAbsent", () => {
+    const bound = (
+      projects: ReadonlyArray<{
+        readonly id: string;
+        readonly host: string;
+        readonly remotePath: string;
+        readonly deleted?: boolean;
+      }>,
+    ): OrchestrationReadModel => ({
+      ...readModel,
+      projects: projects.map((entry) => ({
+        id: ProjectId.make(entry.id),
+        title: entry.id,
+        workspaceRoot: `/mirror/${entry.id}`,
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        remote: { host: entry.host, remotePath: entry.remotePath },
+        scripts: [],
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: entry.deleted === true ? now : null,
+      })),
+    });
+
+    const free = (
+      model: OrchestrationReadModel,
+      host: string,
+      remotePath: string,
+      exceptProjectId?: string,
+    ) =>
+      Effect.runPromise(
+        requireActiveProjectRemoteBindingAbsent({
+          readModel: model,
+          command: messageSendCommand,
+          remote: { host, remotePath },
+          ...(exceptProjectId === undefined
+            ? {}
+            : { exceptProjectId: ProjectId.make(exceptProjectId) }),
+        }).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        ),
+      );
+
+    it("rejects a second project bound to the same directory on the same host", async () => {
+      const model = bound([{ id: "p1", host: "buildbox", remotePath: "/srv/app" }]);
+      expect(await free(model, "buildbox", "/srv/app")).toBe(false);
+    });
+
+    it("ignores trailing slashes and host casing", async () => {
+      const model = bound([{ id: "p1", host: "BuildBox", remotePath: "/srv/app" }]);
+      expect(await free(model, "buildbox", "/srv/app/")).toBe(false);
+    });
+
+    it("treats remote paths as case-sensitive, because remote filesystems are POSIX", async () => {
+      const model = bound([{ id: "p1", host: "buildbox", remotePath: "/srv/app" }]);
+      expect(await free(model, "buildbox", "/srv/App")).toBe(true);
+    });
+
+    it("allows the same path on a different host", async () => {
+      const model = bound([{ id: "p1", host: "buildbox", remotePath: "/srv/app" }]);
+      expect(await free(model, "otherbox", "/srv/app")).toBe(true);
+    });
+
+    it("allows rebinding the same project to its own binding", async () => {
+      const model = bound([{ id: "p1", host: "buildbox", remotePath: "/srv/app" }]);
+      expect(await free(model, "buildbox", "/srv/app", "p1")).toBe(true);
+    });
+
+    it("ignores deleted projects, so a deleted binding can be reclaimed", async () => {
+      const model = bound([{ id: "p1", host: "buildbox", remotePath: "/srv/app", deleted: true }]);
+      expect(await free(model, "buildbox", "/srv/app")).toBe(true);
+    });
+
+    it("ignores purely local projects", async () => {
+      expect(await free(readModel, "buildbox", "/srv/app")).toBe(true);
+    });
   });
 });

@@ -24,6 +24,25 @@ The top-level workspace record in the app. In [the orchestration contracts][1], 
 
 The root filesystem path for a project. In [the orchestration model][1], it is the base directory for branches and optional worktrees. See [workspace-layout.md][2].
 
+#### Context root
+
+An optional ancestor directory that groups related projects. Projects sharing a context root are
+shown together under the directory name, and their agents may read shared files and neighboring
+repositories from that directory. The workspace root remains the project's working directory, so
+source control, worktrees, checkpoints, diffs, and restores stay scoped to one repository.
+
+#### Remote binding
+
+An optional ssh host plus directory attached to a project, making it a _remote-backed project_. The
+binding says where the source really lives and which machine runs its commands. It is additive: the
+workspace root still points at a real directory on this server's disk, so the file tree, search,
+git, diffs, and checkpointing behave the same whether a project is bound or not.
+
+Distinct from a [desktop-managed SSH environment](./remote.md#desktop-managed-ssh-access), which
+runs a whole second T3 server on the remote. A remote binding installs nothing there: threads,
+history, settings, and provider credentials all stay local, and one environment can hold projects
+bound to several different hosts. See [remote.md](./remote.md#remote-backed-projects).
+
 #### Worktree
 
 A Git worktree used as an isolated workspace for a thread. If a thread has a `worktreePath` in [the contracts][1], it runs there instead of in the main working tree. Git operations live behind the VCS driver contract in `apps/server/src/vcs/VcsDriver.ts`, implemented by [GitVcsDriverCore.ts][3].
@@ -33,6 +52,26 @@ A Git worktree used as an isolated workspace for a thread. If a thread has a `wo
 #### Thread
 
 The main durable unit of conversation and workspace history. In [the orchestration contracts][1], a thread holds messages, activities, checkpoints, and session-related state. See [projector.ts][4].
+
+#### Sub-thread
+
+A thread opened from a quoted passage of another thread's assistant message — a side conversation
+about one point. In [the orchestration contracts][1], a sub-thread carries `parentThreadId` and a
+`sourceQuote` (`messageId` + bounded text) on both the thread and its shell; both are write-once at
+creation and the decider enforces one level of nesting. A sub-thread joins its parent's worktree
+and branch (the reactor skips the first-turn branch rename for it) and defaults to plan mode. The
+quote itself is folded into the first user message client-side; the server stores it only as
+provenance. Clients render _anchors_ from shell data: the quoted passage highlighted in the parent
+transcript plus a chip row under the message. Deleting a parent does not cascade — orphaned
+sub-threads promote to the top level of thread lists. Shared client helpers live in
+`packages/client-runtime/src/state/subThreads.ts`.
+
+#### Source quote
+
+The passage a sub-thread was opened about: the parent message id, the selected text (capped at 500
+characters so it can ride every shell snapshot), and an optional offset hint. The message id is
+client-supplied provenance, not validated by the decider, so clients tolerate a quote whose message
+no longer exists.
 
 #### Turn
 

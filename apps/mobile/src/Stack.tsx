@@ -30,6 +30,7 @@ import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
 import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
 import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
 import { GitOverviewSheet } from "./features/threads/git/GitOverviewSheet";
+import { SubThreadDraftRouteScreen } from "./features/threads/SubThreadDraftScreen";
 import { ThreadRouteScreen } from "./features/threads/ThreadRouteScreen";
 import { ConnectionsRouteScreen } from "./features/connection/ConnectionsRouteScreen";
 import { ConnectionsNewRouteScreen } from "./features/connection/ConnectionsNewRouteScreen";
@@ -331,6 +332,7 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
   "NewTaskSheet",
   "SettingsLegal",
   "SettingsSheet",
+  "SubThreadDraft",
   "ThreadReviewComment",
   "ThreadSettingsSheet",
 ]);
@@ -513,6 +515,20 @@ export const RootStack = createNativeStackNavigator({
               sheetAllowedDetents: [1],
               sheetGrabberVisible: true,
             }),
+      },
+    }),
+    SubThreadDraft: createNativeStackScreen({
+      screen: SubThreadDraftRouteScreen,
+      linking: `${THREAD_LINKING_PREFIX}/ask`,
+      options: {
+        // Android cannot host the keyboard-driven question input inside a
+        // formSheet (same constraint as the review comment composer); use a
+        // full-screen modal there instead.
+        ...(Platform.OS === "android"
+          ? { presentation: "fullScreenModal" as const }
+          : FORM_SHEET_PRESENTATION_OPTIONS),
+        sheetAllowedDetents: Platform.OS === "android" ? undefined : [0.55, 0.92],
+        sheetGrabberVisible: Platform.OS !== "android",
       },
     }),
     GitOverview: createNativeStackScreen({

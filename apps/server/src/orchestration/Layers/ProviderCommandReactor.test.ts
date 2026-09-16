@@ -1510,6 +1510,55 @@ describe("ProviderCommandReactor", () => {
     expect(harness.refreshStatus.mock.calls[0]?.[0]).toBe("/tmp/provider-project-worktree");
   });
 
+  it("never renames the shared branch from a sub-thread's first turn", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    // A sub-thread joins its parent's worktree; even on a still-temporary
+    // branch, its first turn must not rename the branch out from under the
+    // parent's shell record.
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-sub-thread-create"),
+        threadId: ThreadId.make("thread-sub"),
+        projectId: asProjectId("project-1"),
+        parentThreadId: ThreadId.make("thread-1"),
+        sourceQuote: {
+          messageId: asMessageId("assistant-message-quoted"),
+          text: "the quoted passage",
+        },
+        title: "Re: the quoted passage",
+        modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.3-codex"),
+        interactionMode: "plan",
+        runtimeMode: "approval-required",
+        branch: "t3code/1234abcd",
+        worktreePath: "/tmp/provider-project-worktree",
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-sub-thread-turn-start"),
+        threadId: ThreadId.make("thread-sub"),
+        message: {
+          messageId: asMessageId("user-message-sub-thread"),
+          role: "user",
+          text: "Why is this passage true?",
+          attachments: [],
+        },
+        interactionMode: "plan",
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.generateBranchName).not.toHaveBeenCalled();
+  });
+
   it("forwards codex model options through session start and turn send", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -1550,6 +1599,91 @@ describe("ProviderCommandReactor", () => {
         { id: "fastMode", value: true },
       ]),
     });
+  });
+
+  it("resolves a $skill reference from the shared catalog and attaches it to the turn", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const worktreePath = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "t3code-reactor-skill-worktree-"),
+    );
+    createdBaseDirs.add(worktreePath);
+    const skillDir = NodePath.join(worktreePath, ".claude", "skills", "t3-reactor-test-skill");
+    NodeFS.mkdirSync(skillDir, { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: t3-reactor-test-skill",
+        "description: A skill only this test knows about.",
+        "---",
+        "",
+        "Ask another model to review the diff.",
+      ].join("\n"),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-skill-worktree"),
+        threadId: ThreadId.make("thread-1"),
+        branch: "t3code/skill-test",
+        worktreePath,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-skill"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-skill"),
+          role: "user",
+          text: "Please run $t3-reactor-test-skill on this.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      threadId: ThreadId.make("thread-1"),
+      resolvedSkills: [
+        {
+          name: "t3-reactor-test-skill",
+          instructions: "Ask another model to review the diff.",
+        },
+      ],
+    });
+  });
+
+  it("omits resolvedSkills when the message references no known skill", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-no-skill"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-no-skill"),
+          role: "user",
+          text: "Please run $nonexistent-skill-reference on this.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.sendTurn.mock.calls[0]?.[0]).not.toHaveProperty("resolvedSkills");
   });
 
   it("forwards claude effort options through session start and turn send", async () => {
@@ -2042,6 +2176,64 @@ describe("ProviderCommandReactor", () => {
       },
       runtimeMode: "approval-required",
     });
+  });
+
+  it("hands the project's context root to the provider and restarts when it changes", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const turnStart = (suffix: string) =>
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make(`cmd-turn-start-context-${suffix}`),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId(`user-message-context-${suffix}`),
+          role: "user",
+          text: `turn ${suffix}`,
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      });
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "project.meta.update",
+        commandId: CommandId.make("cmd-project-context-root-set"),
+        projectId: asProjectId("project-1"),
+        contextRoot: "/tmp",
+      }),
+    );
+    await Effect.runPromise(turnStart("1"));
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      cwd: "/tmp/provider-project",
+      contextRoot: "/tmp",
+    });
+
+    // Same root again: the live session is kept.
+    await Effect.runPromise(turnStart("2"));
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    expect(harness.startSession.mock.calls.length).toBe(1);
+
+    // Clearing it is a grant change, so the session restarts with its resume state intact.
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "project.meta.update",
+        commandId: CommandId.make("cmd-project-context-root-clear"),
+        projectId: asProjectId("project-1"),
+        contextRoot: null,
+      }),
+    );
+    await Effect.runPromise(turnStart("3"));
+    await waitFor(() => harness.sendTurn.mock.calls.length === 3);
+    expect(harness.startSession.mock.calls.length).toBe(2);
+    expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
+      cwd: "/tmp/provider-project",
+      resumeCursor: { opaque: "resume-1" },
+    });
+    expect(harness.startSession.mock.calls[1]?.[1]).not.toHaveProperty("contextRoot");
   });
 
   it("restarts claude sessions when claude effort changes", async () => {

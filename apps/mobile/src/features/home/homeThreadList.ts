@@ -13,6 +13,7 @@ import {
   toSortableTimestamp,
 } from "@t3tools/client-runtime/state/thread-sort";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
+import { inferProjectTitleFromPath } from "@t3tools/client-runtime/state/projects";
 import type {
   EnvironmentId,
   ScopedProjectRef,
@@ -25,6 +26,7 @@ import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
+import { nestThreadsUnderParents } from "../threads/threadListV2";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 
 export type HomeProjectSortOrder = Exclude<SidebarProjectSortOrder, "manual">;
@@ -32,6 +34,7 @@ export type HomeProjectSortOrder = Exclude<SidebarProjectSortOrder, "manual">;
 export interface HomeProjectScope {
   readonly key: string;
   readonly title: string;
+  readonly groupLabel: string | null;
   readonly representative: EnvironmentProject;
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly projectRefs: ReadonlyArray<ScopedProjectRef>;
@@ -66,6 +69,9 @@ export function buildHomeProjectScopes(input: {
     return {
       key: group.key,
       title: group.label,
+      groupLabel: group.representative.contextRoot
+        ? inferProjectTitleFromPath(group.representative.contextRoot)
+        : null,
       representative: group.representative,
       projects: group.members.map((member) => member.project),
       projectRefs: group.memberProjectRefs,
@@ -146,6 +152,7 @@ const RECENT_THREAD_FALLBACK_COUNT = 3;
 export interface HomeThreadGroup {
   readonly key: string;
   readonly title: string;
+  readonly groupLabel: string | null;
   readonly representative: EnvironmentProject;
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
@@ -327,7 +334,14 @@ export function buildHomeThreadGroups(input: {
       continue;
     }
 
-    const sortedThreads = sortThreads(matchingThreads, input.threadSortOrder);
+    // Sub-threads sit directly under their parent (still sorted within each
+    // run); a sub-thread whose parent is not in this group's list keeps its
+    // own sorted top-level position. Because a parent always precedes its
+    // children, the layout's prefix pagination can never show a child
+    // without its parent row above it.
+    const sortedThreads = nestThreadsUnderParents(
+      sortThreads(matchingThreads, input.threadSortOrder),
+    ).map((entry) => entry.thread);
     // An active search should reach the full history, so the recency window
     // only trims the default (no-query) view.
     const recentThreads =
@@ -358,6 +372,9 @@ export function buildHomeThreadGroups(input: {
     result.push({
       key: group.key,
       title,
+      groupLabel: representative.contextRoot
+        ? inferProjectTitleFromPath(representative.contextRoot)
+        : null,
       representative,
       projects: group.projects,
       pendingTasks: matchingPendingTasks,

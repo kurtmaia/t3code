@@ -2,6 +2,7 @@ import {
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
   GitPullRequestIcon,
+  SquareKanbanIcon,
   SettingsIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -155,7 +156,9 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           ? "usage"
           : location.pathname === "/pull-requests"
             ? "pull-requests"
-            : null,
+            : location.pathname === "/tasks"
+              ? "tasks"
+              : null,
   });
   const { environments } = useEnvironments();
   // The page reads every connected server, so one of them offering pull requests is enough for
@@ -171,6 +174,10 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const handlePullRequestsClick = useCallback(() => {
     closeMobileSidebar();
     void navigate({ to: "/pull-requests", search: { involvement: "all", state: "open" } });
+  }, [closeMobileSidebar, navigate]);
+  const handleTasksClick = useCallback(() => {
+    closeMobileSidebar();
+    void navigate({ to: "/tasks" });
   }, [closeMobileSidebar, navigate]);
   const handleSettingsClick = useCallback(() => {
     closeMobileSidebar();
@@ -208,6 +215,11 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             icon={<SettingsIcon />}
             label="Settings"
             onClick={handleSettingsClick}
+          />
+          <SidebarUtilityItem
+            icon={<SquareKanbanIcon />}
+            label="Tasks"
+            onClick={handleTasksClick}
           />
           {pullRequestsSupported ? (
             <SidebarUtilityItem

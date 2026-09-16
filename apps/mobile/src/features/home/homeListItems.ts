@@ -31,6 +31,11 @@ export interface HomeThreadListItem {
   readonly type: "thread";
   readonly key: string;
   readonly thread: EnvironmentThreadShell;
+  /** Sub-thread rendered indented under its parent's row. Only set when the
+      parent is in the same group (group threads are nested-ordered, so a
+      visible child always has its parent visible above it); orphaned
+      sub-threads render as normal top-level rows. */
+  readonly isSubThread: boolean;
   readonly isLast: boolean;
 }
 
@@ -104,6 +109,7 @@ export function homeListItemsAreEqual(previous: HomeListItem, item: HomeListItem
       return (
         previous.type === "thread" &&
         previous.thread === item.thread &&
+        previous.isSubThread === item.isSubThread &&
         previous.isLast === item.isLast
       );
     case "show-more":
@@ -180,11 +186,13 @@ export function buildHomeListLayout(input: {
       });
     }
 
+    const groupThreadIds = new Set(group.threads.map((thread) => thread.id));
     for (const [threadIndex, thread] of visibleThreads.entries()) {
       items.push({
         type: "thread",
         key: `thread:${thread.environmentId}:${thread.id}`,
         thread,
+        isSubThread: thread.parentThreadId != null && groupThreadIds.has(thread.parentThreadId),
         isLast: threadIndex === visibleThreads.length - 1 && !hasShowMoreRow,
       });
     }

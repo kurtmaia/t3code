@@ -1,4 +1,10 @@
-import type { UsageProviderKind } from "@t3tools/contracts";
+import type { UsageProviderKind, UsageProviderQuota } from "@t3tools/contracts";
+import {
+  isIsoResetDate,
+  quotaProviderLabel,
+  quotaWindowLabel,
+  selectQuotaPerProvider,
+} from "@t3tools/shared/usageQuotaPresentation";
 import { CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -209,6 +215,12 @@ export function UsagePage() {
                   duplicateSources={merged.duplicateSources}
                   staleEnvironments={merged.staleEnvironments}
                 />
+
+                <UsageProviderQuotas environments={environments} />
+
+                <h2 className="border-t border-border pt-4 text-sm font-medium text-muted-foreground">
+                  Raw usage
+                </h2>
 
                 <section className="grid gap-6 lg:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]">
                   <div className="flex min-w-0 flex-col gap-5">
@@ -497,6 +509,73 @@ function UsageCoverageNotice({
       ) : null}
     </div>
   );
+}
+
+function UsageProviderQuotas({
+  environments,
+}: {
+  readonly environments: readonly EnvironmentUsageStatus[];
+}) {
+  const reports = selectQuotaPerProvider(
+    environments.map((environment) => environment.summary?.providerQuotas),
+  );
+  if (reports.length === 0) return null;
+  return (
+    <section className="flex flex-col gap-2 border-y border-border py-3">
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 className="text-sm font-medium text-foreground">Quota remaining</h2>
+        <span className="text-xs text-muted-foreground">Tightest window per provider</span>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {reports.map((quota) => (
+          <div key={quota.provider} className="flex flex-col gap-1">
+            <div className="flex items-baseline justify-between text-sm">
+              <span className="min-w-0 truncate text-foreground">
+                {quotaProviderLabel(quota.provider)}
+              </span>
+              <span className="shrink-0 tabular-nums text-foreground">
+                {quota.isUnlimited
+                  ? "Unlimited"
+                  : quota.remainingPercentage === null
+                    ? "Unavailable"
+                    : `${quota.remainingPercentage.toFixed(0)}%`}
+              </span>
+            </div>
+            <span className="text-xs text-muted-foreground">{quotaWindowLabel(quota)}</span>
+            {quota.remainingPercentage !== null && !quota.isUnlimited ? (
+              <div className="h-1 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full"
+                  style={{
+                    width: `${quota.remainingPercentage}%`,
+                    backgroundColor: quotaProviderColor(quota.provider),
+                  }}
+                />
+              </div>
+            ) : null}
+            <span className="text-xs text-muted-foreground">
+              {quota.status === "unavailable"
+                ? quota.message
+                : quota.isUnlimited
+                  ? "No reported cap"
+                  : quota.usedAmount !== null && quota.limitAmount !== null
+                    ? `${quota.usedAmount.toLocaleString()} / ${quota.limitAmount.toLocaleString()} ${quota.unit}${quota.resetDate ? ` · resets ${formatQuotaReset(quota.resetDate)}` : ""}`
+                    : `${quota.remainingPercentage === null ? "" : `${(100 - quota.remainingPercentage).toFixed(0)}% used`}${quota.resetDate ? ` · resets ${formatQuotaReset(quota.resetDate)}` : ""}`}
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** Provider accents stay per-surface: web reads CSS variables mobile has no access to. */
+function quotaProviderColor(provider: UsageProviderQuota["provider"]) {
+  return provider === "claude" ? "#d97757" : provider === "codex" ? "var(--foreground)" : "#10b981";
+}
+
+function formatQuotaReset(resetDate: string) {
+  return isIsoResetDate(resetDate) ? formatDayShort(resetDate.slice(0, 10)) : resetDate;
 }
 
 /**

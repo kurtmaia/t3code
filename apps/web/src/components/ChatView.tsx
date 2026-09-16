@@ -254,8 +254,17 @@ import {
   useThread,
   useThreadRefs,
   useThreadShell,
+  useThreadShells,
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
+import {
+  selectSubThreadAnchors,
+  truncateQuote,
+  type SubThreadAnchor,
+} from "@t3tools/client-runtime/state/subThreads";
+import { SubThreadPanel } from "./SubThreadPanel";
+import { QuoteSelectionAffordance } from "./chat/QuoteSelectionAffordance";
+import { useSubThreadQuoteHighlights } from "./chat/useSubThreadQuoteHighlights";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
@@ -1671,9 +1680,13 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
   const rightPanelOpen = rightPanelState.isOpen;
-  const canMaximizeRightPanel = rightPanelOpen && !shouldUseRightPanelSheet;
-  const rightPanelMaximized =
-    canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
+  // Maximizing works in both layouts, but it buys room from different places:
+  // inline the chat column gives up its width, in the sheet layout the sheet
+  // stops being a side column and takes the viewport.
+  const rightPanelMaximized = rightPanelOpen && maximizedRightPanelThreadKey === routeThreadKey;
+  // The sheet overlays the chat column rather than sitting beside it, so
+  // collapsing that column there would blank the background for no room gained.
+  const chatColumnMaximizedAway = rightPanelMaximized && !shouldUseRightPanelSheet;
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUseRightPanelSheet;
 
   useEffect(() => {
@@ -3316,6 +3329,63 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef) return;
     useRightPanelStore.getState().open(activeThreadRef, "agents");
   }, [activeThreadRef]);
+  // Sub-thread anchors for this thread, derived from shell data alone. Both
+  // provenance fields are write-once, so this only changes when threads
+  // appear or disappear.
+  const allThreadShells = useThreadShells();
+  const subThreadAnchorsByMessageId = useMemo(() => {
+    if (!isServerThread || !activeThreadId) return null;
+    const environmentShells = allThreadShells.filter(
+      (shell) => shell.environmentId === environmentId,
+    );
+    return selectSubThreadAnchors(environmentShells).get(activeThreadId) ?? null;
+  }, [activeThreadId, allThreadShells, environmentId, isServerThread]);
+  const subThreadAnchors = useMemo(
+    () =>
+      subThreadAnchorsByMessageId === null
+        ? null
+        : [...subThreadAnchorsByMessageId.values()].flat(),
+    [subThreadAnchorsByMessageId],
+  );
+  const timelineContainerRef = useRef<HTMLDivElement>(null);
+  useSubThreadQuoteHighlights(timelineContainerRef, subThreadAnchors);
+  const openSubThreadDraftSurface = useCallback(
+    (input: { messageId: string; quoteText: string }) => {
+      if (!activeThreadRef || !isServerThread) return;
+      useRightPanelStore.getState().openSubThreadDraft(activeThreadRef, {
+        parentMessageId: input.messageId,
+        quoteText: truncateQuote(input.quoteText),
+      });
+    },
+    [activeThreadRef, isServerThread],
+  );
+  const openSubThreadAnchorSurface = useCallback(
+    (anchor: SubThreadAnchor) => {
+      if (!activeThreadRef) return;
+      useRightPanelStore.getState().openSubThread(activeThreadRef, {
+        subThreadId: anchor.threadId,
+        parentMessageId: anchor.messageId,
+        quoteText: anchor.quoteText,
+      });
+    },
+    [activeThreadRef],
+  );
+  const promoteSubThreadDraftSurface = useCallback(
+    (draftSurfaceId: string, subThreadId: string) => {
+      if (!activeThreadRef) return;
+      useRightPanelStore
+        .getState()
+        .promoteSubThreadDraft(activeThreadRef, draftSurfaceId, subThreadId);
+    },
+    [activeThreadRef],
+  );
+  const closeSubThreadSurface = useCallback(
+    (surfaceId: string) => {
+      if (!activeThreadRef) return;
+      useRightPanelStore.getState().closeSurface(activeThreadRef, surfaceId);
+    },
+    [activeThreadRef],
+  );
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
@@ -3504,11 +3574,11 @@ function ChatViewContent(props: ChatViewProps) {
     useRightPanelStore.getState().toggleVisibility(activeThreadRef);
   }, [activeThreadRef, closePreviewPanel, rightPanelOpen]);
   const toggleRightPanelMaximized = useCallback(() => {
-    if (!canMaximizeRightPanel) return;
+    if (!rightPanelOpen) return;
     setMaximizedRightPanelThreadKey((threadKey) =>
       threadKey === routeThreadKey ? null : routeThreadKey,
     );
-  }, [canMaximizeRightPanel, routeThreadKey]);
+  }, [rightPanelOpen, routeThreadKey]);
   const cleanupRightPanelSurfaces = useCallback(
     (surfaces: readonly RightPanelSurface[]) => {
       if (!activeThreadRef) return;
@@ -6253,6 +6323,16 @@ function ChatViewContent(props: ChatViewProps) {
         environmentId={activeThreadRef?.environmentId ?? null}
         threadId={activeThreadRef?.threadId ?? null}
       />
+    ) : activeRightPanelSurface?.kind === "sub-thread" && routeServerThreadShell ? (
+      <SubThreadPanel
+        key={activeRightPanelSurface.id}
+        parentThreadRef={activeThreadRef}
+        parentShell={routeServerThreadShell}
+        surface={activeRightPanelSurface}
+        cwd={gitCwd ?? undefined}
+        onPromoteDraft={promoteSubThreadDraftSurface}
+        onCloseSurface={closeSubThreadSurface}
+      />
     ) : (activeRightPanelSurface?.kind === "files" || activeRightPanelSurface?.kind === "file") &&
       activeProject &&
       activeWorkspaceRoot ? (
@@ -6289,9 +6369,9 @@ function ChatViewContent(props: ChatViewProps) {
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
-          rightPanelMaximized ? "w-0 flex-none" : "flex-1",
+          chatColumnMaximizedAway ? "w-0 flex-none" : "flex-1",
         )}
-        data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
+        data-chat-column-maximized-away={chatColumnMaximizedAway ? "true" : "false"}
       >
         {/* Top bar */}
         <WorkspacePageHeader
@@ -6372,9 +6452,11 @@ function ChatViewContent(props: ChatViewProps) {
               />
             </div>
             {/* Messages Wrapper */}
-            <div className="relative flex min-h-0 flex-1 flex-col">
+            <div ref={timelineContainerRef} className="relative flex min-h-0 flex-1 flex-col">
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
+                subThreadAnchorsByMessageId={subThreadAnchorsByMessageId}
+                onOpenSubThread={openSubThreadAnchorSurface}
                 agentPanelModel={agentPanelModel}
                 onOpenAgents={addAgentsSurface}
                 key={activeThread.id}
@@ -6412,6 +6494,12 @@ function ChatViewContent(props: ChatViewProps) {
                 hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
                 topFadeEnabled={!hasTimelineTopBanner}
                 loadEarlier={loadEarlierTurns}
+              />
+
+              <QuoteSelectionAffordance
+                containerRef={timelineContainerRef}
+                enabled={isServerThread}
+                onAskAboutSelection={openSubThreadDraftSurface}
               />
 
               {/* scroll to end pill — shown when user has scrolled away from the live edge */}
@@ -6728,14 +6816,22 @@ function ChatViewContent(props: ChatViewProps) {
         </RightPanelTabs>
       ) : null}
       {shouldUseRightPanelSheet && rightPanelOpen && activeThreadRef ? (
-        <RightPanelSheet open onClose={closePreviewPanel}>
+        <RightPanelSheet open expanded={rightPanelMaximized} onClose={closePreviewPanel}>
           <RightPanelTabs
             mode="sheet"
             // Same effective inset as the closed-state titlebar controls
             // (pr-3 in the tab bar plus this pixel equals the absolute
             // right inset plus mr-px), so the cluster does not creep when
             // the sheet opens.
-            layoutControls={<div className="mr-px flex items-center">{panelToggleControls}</div>}
+            layoutControls={
+              <div className="mr-px flex items-center">
+                <RightPanelMaximizeControl
+                  maximized={rightPanelMaximized}
+                  onToggle={toggleRightPanelMaximized}
+                />
+                {panelToggleControls}
+              </div>
+            }
             surfaces={rightPanelState.surfaces}
             activeSurfaceId={activeRightPanelSurface?.id ?? null}
             pendingSurfaceIds={pendingFileSurfaceIds}

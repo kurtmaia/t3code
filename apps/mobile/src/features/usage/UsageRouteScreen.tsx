@@ -1,4 +1,10 @@
 import { useNavigation } from "@react-navigation/native";
+import {
+  isIsoResetDate,
+  quotaProviderLabel,
+  quotaWindowLabel,
+  selectQuotaPerProvider,
+} from "@t3tools/shared/usageQuotaPresentation";
 import type { DailyTotals, MergedUsage } from "@t3tools/shared/usageMerge";
 import {
   enumerateDays,
@@ -116,6 +122,12 @@ export function UsageRouteScreen() {
         />
 
         <UsageCoverageNotice environments={environments} merged={merged} isPartial={isPartial} />
+
+        <ProviderQuotasSection environments={environments} />
+
+        <Text className="border-t border-border-subtle pt-4 text-sm text-foreground-muted">
+          Raw usage
+        </Text>
 
         {isPending ? (
           <Text className="py-16 text-center text-base text-foreground-muted">
@@ -397,6 +409,65 @@ function TotalsSection(props: { readonly merged: MergedUsage; readonly isPast24H
       </View>
     </SettingsSection>
   );
+}
+
+function ProviderQuotasSection(props: {
+  readonly environments: readonly EnvironmentUsageStatus[];
+}) {
+  const reports = selectQuotaPerProvider(
+    props.environments.map((environment) => environment.summary?.providerQuotas),
+  );
+  const providerColors = useProviderColors();
+  if (reports.length === 0) return null;
+  return (
+    <SettingsSection title="Quota remaining · tightest window per provider" card>
+      {reports.map((quota) => (
+        <View
+          key={quota.provider}
+          className="gap-2 border-b border-border-subtle p-4 last:border-b-0"
+        >
+          <View className="flex-row items-baseline justify-between">
+            <Text className="min-w-0 flex-1 text-base text-foreground">
+              {quotaProviderLabel(quota.provider)}
+            </Text>
+            <Text className="text-base tabular-nums text-foreground">
+              {quota.isUnlimited
+                ? "Unlimited"
+                : quota.remainingPercentage === null
+                  ? "Unavailable"
+                  : `${quota.remainingPercentage.toFixed(0)}%`}
+            </Text>
+          </View>
+          <Text className="text-xs text-foreground-tertiary">{quotaWindowLabel(quota)}</Text>
+          {quota.remainingPercentage !== null && !quota.isUnlimited ? (
+            <View className="h-1 overflow-hidden rounded-full bg-subtle">
+              <View
+                className="h-full rounded-full"
+                style={{
+                  width: `${quota.remainingPercentage}%`,
+                  backgroundColor:
+                    quota.provider === "copilot" ? "#10b981" : providerColors[quota.provider],
+                }}
+              />
+            </View>
+          ) : null}
+          <Text className="text-xs text-foreground-tertiary">
+            {quota.status === "unavailable"
+              ? quota.message
+              : quota.isUnlimited
+                ? "No reported cap"
+                : quota.usedAmount !== null && quota.limitAmount !== null
+                  ? `${quota.usedAmount.toLocaleString()} / ${quota.limitAmount.toLocaleString()} ${quota.unit}${quota.resetDate ? ` · resets ${formatQuotaReset(quota.resetDate)}` : ""}`
+                  : `${quota.remainingPercentage === null ? "" : `${(100 - quota.remainingPercentage).toFixed(0)}% used`}${quota.resetDate ? ` · resets ${formatQuotaReset(quota.resetDate)}` : ""}`}
+          </Text>
+        </View>
+      ))}
+    </SettingsSection>
+  );
+}
+
+function formatQuotaReset(resetDate: string) {
+  return isIsoResetDate(resetDate) ? resetDate.slice(0, 10) : resetDate;
 }
 
 function MetricCell(props: {

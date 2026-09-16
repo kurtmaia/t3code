@@ -83,6 +83,14 @@
       "types": "./src/state/projects.ts",
       "default": "./src/state/projects.ts"
     },
+    "./state/taskEntities": {
+      "types": "./src/state/taskEntities.ts",
+      "default": "./src/state/taskEntities.ts"
+    },
+    "./state/taskCommands": {
+      "types": "./src/state/taskCommands.ts",
+      "default": "./src/state/taskCommands.ts"
+    },
     "./state/pull-requests": {
       "types": "./src/state/pullRequests.ts",
       "default": "./src/state/pullRequests.ts"
@@ -118,6 +126,10 @@
     "./state/source-control": {
       "types": "./src/state/sourceControl.ts",
       "default": "./src/state/sourceControl.ts"
+    },
+    "./state/subThreads": {
+      "types": "./src/state/subThreads.ts",
+      "default": "./src/state/subThreads.ts"
     },
     "./state/terminal": {
       "types": "./src/state/terminal.ts",

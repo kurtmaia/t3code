@@ -1,4 +1,10 @@
-import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@t3tools/contracts";
+import type {
+  OrchestrationEvent,
+  OrchestrationReadModel,
+  OrchestrationTask,
+  TaskId,
+  ThreadId,
+} from "@t3tools/contracts";
 import {
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
@@ -33,9 +39,24 @@ import {
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
+  TaskCreatedPayload,
+  TaskDeletedPayload,
+  TaskMetaUpdatedPayload,
+  TaskImportReconciledPayload,
+  TaskReorderedPayload,
+  TaskStatusChangedPayload,
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
+type TaskPatch = Partial<Omit<OrchestrationTask, "id" | "projectId">>;
+
+function updateTask(
+  tasks: ReadonlyArray<OrchestrationTask>,
+  taskId: TaskId,
+  patch: TaskPatch,
+): ReadonlyArray<OrchestrationTask> {
+  return tasks.map((task) => (task.id === taskId ? { ...task, ...patch } : task));
+}
 const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
 
@@ -190,6 +211,7 @@ export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
     snapshotSequence: 0,
     projects: [],
     threads: [],
+    tasks: [],
     updatedAt: nowIso,
   };
 }
@@ -216,6 +238,8 @@ export function projectEvent(
             defaultModelSelection: payload.defaultModelSelection,
             defaultThreadEnvMode: null,
             faviconPath: payload.faviconPath ?? null,
+            contextRoot: payload.contextRoot ?? null,
+            remote: payload.remote ?? null,
             scripts: payload.scripts,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -254,6 +278,10 @@ export function projectEvent(
                   ...(payload.faviconPath !== undefined
                     ? { faviconPath: payload.faviconPath }
                     : {}),
+                  ...(payload.contextRoot !== undefined
+                    ? { contextRoot: payload.contextRoot }
+                    : {}),
+                  ...(payload.remote !== undefined ? { remote: payload.remote } : {}),
                   ...(payload.scripts !== undefined ? { scripts: payload.scripts } : {}),
                   updatedAt: payload.updatedAt,
                 }
@@ -297,6 +325,9 @@ export function projectEvent(
             interactionMode: payload.interactionMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
+            taskId: payload.taskId ?? null,
+            parentThreadId: payload.parentThreadId ?? null,
+            sourceQuote: payload.sourceQuote ?? null,
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -447,6 +478,7 @@ export function projectEvent(
         Effect.map((payload) => ({
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
+            ...(payload.taskId !== undefined ? { taskId: payload.taskId } : {}),
             ...(payload.title !== undefined ? { title: payload.title } : {}),
             ...(payload.titleRegeneration !== undefined
               ? { titleRegeneration: payload.titleRegeneration }
@@ -798,6 +830,103 @@ export function projectEvent(
             }),
           };
         }),
+      );
+
+    case "task.created":
+      return decodeForEvent(TaskCreatedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const task: OrchestrationTask = {
+            id: payload.taskId,
+            projectId: payload.projectId,
+            title: payload.title,
+            status: payload.status,
+            priority: payload.priority,
+            body: payload.body,
+            labels: payload.labels,
+            orderKey: payload.orderKey,
+            branch: payload.branch ?? null,
+            worktreePath: payload.worktreePath ?? null,
+            planMarkdown: payload.planMarkdown ?? null,
+            source: payload.source ?? null,
+            externalId: payload.externalId ?? null,
+            createdAt: payload.createdAt,
+            updatedAt: payload.updatedAt,
+            deletedAt: null,
+          };
+          const existing = nextBase.tasks.some((entry) => entry.id === payload.taskId);
+          return {
+            ...nextBase,
+            tasks: existing
+              ? nextBase.tasks.map((entry) => (entry.id === payload.taskId ? task : entry))
+              : [...nextBase.tasks, task],
+          };
+        }),
+      );
+
+    case "task.meta-updated":
+      return decodeForEvent(TaskMetaUpdatedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          tasks: updateTask(nextBase.tasks, payload.taskId, {
+            ...(payload.title !== undefined ? { title: payload.title } : {}),
+            ...(payload.priority !== undefined ? { priority: payload.priority } : {}),
+            ...(payload.body !== undefined ? { body: payload.body } : {}),
+            ...(payload.labels !== undefined ? { labels: payload.labels } : {}),
+            ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
+            ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
+            ...(payload.planMarkdown !== undefined ? { planMarkdown: payload.planMarkdown } : {}),
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "task.import-reconciled":
+      return decodeForEvent(TaskImportReconciledPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          tasks: updateTask(nextBase.tasks, payload.taskId, {
+            ...(payload.title !== undefined ? { title: payload.title } : {}),
+            ...(payload.status !== undefined ? { status: payload.status } : {}),
+            ...(payload.priority !== undefined ? { priority: payload.priority } : {}),
+            ...(payload.body !== undefined ? { body: payload.body } : {}),
+            ...(payload.labels !== undefined ? { labels: payload.labels } : {}),
+            ...(payload.orderKey !== undefined ? { orderKey: payload.orderKey } : {}),
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "task.status-changed":
+      return decodeForEvent(TaskStatusChangedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          tasks: updateTask(nextBase.tasks, payload.taskId, {
+            status: payload.status,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "task.reordered":
+      return decodeForEvent(TaskReorderedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          tasks: updateTask(nextBase.tasks, payload.taskId, {
+            orderKey: payload.orderKey,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "task.deleted":
+      return decodeForEvent(TaskDeletedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          tasks: updateTask(nextBase.tasks, payload.taskId, {
+            deletedAt: payload.deletedAt,
+            updatedAt: payload.deletedAt,
+          }),
+        })),
       );
 
     default:

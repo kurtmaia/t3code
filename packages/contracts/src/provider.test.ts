@@ -151,6 +151,29 @@ describe("ProviderSendTurnInput", () => {
     expect(getOptionValue(parsed.modelSelection?.options, "effort")).toBe("ultrathink");
     expect(getOptionValue(parsed.modelSelection?.options, "fastMode")).toBe(true);
   });
+
+  it("accepts resolvedSkills for a cross-provider skill reference", () => {
+    const parsed = decodeProviderSendTurnInput({
+      threadId: "thread-1",
+      input: "Please run $second-opinion",
+      resolvedSkills: [
+        { name: "second-opinion", instructions: "Ask another model to review the diff." },
+      ],
+    });
+
+    expect(parsed.resolvedSkills).toEqual([
+      { name: "second-opinion", instructions: "Ask another model to review the diff." },
+    ]);
+  });
+
+  it("omits resolvedSkills when absent", () => {
+    const parsed = decodeProviderSendTurnInput({
+      threadId: "thread-1",
+      input: "hello",
+    });
+
+    expect(parsed.resolvedSkills).toBeUndefined();
+  });
 });
 
 describe("providerInstanceId routing key (slice-2 invariant)", () => {

@@ -21,6 +21,10 @@ T3 Code works with the platforms your team already uses:
 - Choose **GitHub repository**, **GitLab repository**, **Bitbucket repository**, **Azure DevOps repository**, or paste any **Git URL**
 - Enter the repository path (`owner/repo`, `group/project`, `workspace/repository`, or `project/repository`) or a full Git URL, pick a destination, and start coding
 
+When a local folder contains several direct-child Git repositories, adding the folder offers to
+create one project per repository and group them under the folder's name. The parent folder remains
+available for shared notes and cross-repository planning.
+
 **Publish local projects to the cloud**
 
 - Have a local Git repository without a remote?
@@ -124,10 +128,29 @@ Control settings**.
    ```bash
    az extension add --name azure-devops
    ```
-3. Sign in:
+3. Sign in, either with a personal access token:
+   ```bash
+   az devops login --organization https://dev.azure.com/your-org
+   ```
+   or with your Entra (Microsoft) identity:
    ```bash
    az login
    ```
+4. Set a default organization so T3 Code knows which one to check:
+   ```bash
+   az devops configure --defaults organization=https://dev.azure.com/your-org
+   ```
+
+If you signed in with a personal access token, Azure DevOps has no way to tell T3 Code who you
+are, so the **Created by me** and **Reviewing** filters have nothing to match on. Name yourself to
+turn them back on:
+
+```bash
+export T3CODE_AZURE_DEVOPS_USER="you@example.com"
+```
+
+Use the email address on your Azure DevOps account, or its identity id. Restart T3 Code after
+setting it. Everything else works without it — pull request lists just come back unfiltered.
 
 ---
 

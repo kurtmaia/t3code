@@ -806,6 +806,7 @@ export function HomeScreen(props: HomeScreenProps) {
           variant={item.item.variant}
           snoozed={item.item.snoozed}
           pinned={item.item.pinned}
+          subThread={item.item.subThread}
           snoozePresetMinute={nowMinute}
           snoozeWakeLabelText={item.snoozeWakeLabelText}
           showTrailingDivider={showTrailingDivider}
@@ -959,6 +960,7 @@ export function HomeScreen(props: HomeScreenProps) {
               onNewThread={props.onNewThreadInProject}
               project={item.group.representative}
               threadCount={item.group.threads.length + item.group.pendingTasks.length}
+              eyebrow={item.group.groupLabel}
               title={item.group.title}
             />
           );
@@ -990,6 +992,7 @@ export function HomeScreen(props: HomeScreenProps) {
                 null
               }
               isLast={item.isLast}
+              isSubThread={item.isSubThread}
               searchMatch={threadSearchMatchByKey.get(
                 threadSearchMatchKey({
                   environmentId: thread.environmentId,

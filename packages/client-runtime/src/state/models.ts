@@ -3,6 +3,7 @@ import type {
   OrchestrationMessage,
   OrchestrationProjectShell,
   OrchestrationShellSnapshot,
+  OrchestrationTask,
   OrchestrationThread,
   OrchestrationThreadShell,
   ThreadId,
@@ -13,6 +14,10 @@ export interface EnvironmentProject extends OrchestrationProjectShell {
 }
 
 export interface EnvironmentThreadShell extends OrchestrationThreadShell {
+  readonly environmentId: EnvironmentId;
+}
+
+export interface EnvironmentTask extends OrchestrationTask {
   readonly environmentId: EnvironmentId;
 }
 
@@ -27,6 +32,10 @@ export function scopeProject(
   project: OrchestrationProjectShell,
 ): EnvironmentProject {
   return { ...project, environmentId };
+}
+
+export function scopeTask(environmentId: EnvironmentId, task: OrchestrationTask): EnvironmentTask {
+  return { ...task, environmentId };
 }
 
 export function scopeThreadShell(

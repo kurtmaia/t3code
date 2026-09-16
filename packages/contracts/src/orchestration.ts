@@ -16,6 +16,7 @@ import {
   PositiveInt,
   ProjectId,
   ProviderItemId,
+  TaskId,
   ThreadId,
   TrimmedNonEmptyString,
   TrimmedString,
@@ -143,6 +144,8 @@ export type ProviderUserInputAnswers = typeof ProviderUserInputAnswers.Type;
 
 export const PROVIDER_SEND_TURN_MAX_INPUT_CHARS = 120_000;
 export const PROVIDER_SEND_TURN_MAX_ATTACHMENTS = 8;
+export const PROVIDER_SEND_TURN_MAX_RESOLVED_SKILLS = 20;
+export const PROVIDER_SEND_TURN_MAX_SKILL_INSTRUCTIONS_CHARS = 20_000;
 export const PROVIDER_SEND_TURN_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 export const PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES = [
   "image/gif",
@@ -231,6 +234,58 @@ export const ProjectFaviconPath = TrimmedNonEmptyString.check(
 );
 export type ProjectFaviconPath = typeof ProjectFaviconPath.Type;
 
+/**
+ * An ancestor directory a project belongs to. Threads of the project may read it, and
+ * projects that share one are grouped under its name. Equal to the workspace root for the
+ * folder that stands in for the group itself.
+ */
+export const ProjectContextRoot = TrimmedNonEmptyString.check(Schema.isMaxLength(1024));
+export type ProjectContextRoot = typeof ProjectContextRoot.Type;
+
+/**
+ * How the remote host's login shell parses a command line. Non-POSIX shells mangle the
+ * quoting we generate, so they are wrapped in `sh -c` rather than trusted directly.
+ */
+export const RemoteShellDialect = Schema.Literals(["posix", "fish", "csh", "unknown"]);
+export type RemoteShellDialect = typeof RemoteShellDialect.Type;
+
+/**
+ * What a remote host was found to support when the binding was created. Probed once at
+ * bind time rather than per operation, and re-probed when a sync fails in a way that
+ * suggests the host changed.
+ */
+export const RemoteHostCapabilities = Schema.Struct({
+  // `rsync --version` output on the remote, or null when rsync is missing entirely.
+  rsyncVersion: Schema.NullOr(TrimmedNonEmptyString),
+  shellDialect: RemoteShellDialect,
+  // Which login shell wraps remote commands. `sh -lc` reads /etc/profile and ~/.profile
+  // only, so hosts that keep nvm/pyenv/mise in ~/.bashrc need bash to see their toolchain.
+  loginShell: Schema.Literals(["bash", "sh"]),
+  // `find -newer` scopes the down-sync to what a command actually touched. Without it
+  // the mirror falls back to comparing the whole tree.
+  supportsFindNewer: Schema.Boolean,
+  probedAt: IsoDateTime,
+});
+export type RemoteHostCapabilities = typeof RemoteHostCapabilities.Type;
+
+/**
+ * Binds a project to a directory on another machine reached over ssh.
+ *
+ * The project's `workspaceRoot` stays local and keeps meaning "a real directory on this
+ * server's disk" - for a bound project that directory is the mirror. This record says
+ * where the source actually lives and which host runs its builds. Absent or null means an
+ * ordinary local project, which is every project that existed before this field.
+ */
+export const ProjectRemoteBinding = Schema.Struct({
+  // An ssh destination: a config alias, or user@host. Resolved through `ssh -G`.
+  host: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  // Absolute path on the remote host. Never normalized against local disk, and never
+  // tilde-expanded locally - the remote HOME is not ours.
+  remotePath: TrimmedNonEmptyString.check(Schema.isMaxLength(1024)),
+  capabilities: Schema.optional(Schema.NullOr(RemoteHostCapabilities)),
+});
+export type ProjectRemoteBinding = typeof ProjectRemoteBinding.Type;
+
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
@@ -242,6 +297,8 @@ export const OrchestrationProject = Schema.Struct({
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   // Optional on the wire so cached snapshots from older servers still decode.
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
+  contextRoot: Schema.optional(Schema.NullOr(ProjectContextRoot)),
+  remote: Schema.optional(Schema.NullOr(ProjectRemoteBinding)),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -284,6 +341,28 @@ const SourceProposedPlanReference = Schema.Struct({
   threadId: ThreadId,
   planId: OrchestrationProposedPlanId,
 });
+
+/** Cap on the quoted passage a sub-thread carries. The quote rides the shell
+    snapshot (so parent transcripts can render anchors from data every client
+    already holds), which is why the bound lives in the schema and not in
+    client goodwill. */
+export const THREAD_SOURCE_QUOTE_MAX_LENGTH = 500;
+
+/**
+ * The passage of a parent-thread message a sub-thread was opened about.
+ * `messageId` is client-supplied provenance — the decider does not track
+ * message ids, so clients must tolerate a message that no longer exists and
+ * fall back to a message-level affordance. `range` is a best-effort hint into
+ * the selection source; anchor matching is text-based, never range-based.
+ */
+export const ThreadSourceQuote = Schema.Struct({
+  messageId: MessageId,
+  text: TrimmedNonEmptyString.check(Schema.isMaxLength(THREAD_SOURCE_QUOTE_MAX_LENGTH)),
+  range: Schema.optional(
+    Schema.NullOr(Schema.Struct({ start: NonNegativeInt, end: NonNegativeInt })),
+  ),
+});
+export type ThreadSourceQuote = typeof ThreadSourceQuote.Type;
 
 export const OrchestrationSessionStatus = Schema.Literals([
   "idle",
@@ -386,6 +465,21 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  /** Task this thread belongs to, if any. A task groups threads that share a
+      narrower context than the whole project — the work on one unit, rather
+      than everything in the repository. Optional on the wire so payloads from
+      pre-task servers still decode. */
+  taskId: Schema.optional(Schema.NullOr(TaskId)),
+  /** Parent thread when this is a sub-thread — a side conversation opened from
+      a quoted passage of the parent's transcript. One level deep only. Not
+      cleared when the parent is deleted: clients promote orphans to the top
+      level. Optional on the wire so payloads from pre-sub-thread servers
+      still decode. */
+  parentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  /** The quoted passage this sub-thread was opened about. Write-once at
+      creation. Optional on the wire so payloads from pre-sub-thread servers
+      still decode. */
+  sourceQuote: Schema.optional(Schema.NullOr(ThreadSourceQuote)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -422,10 +516,96 @@ export const OrchestrationThread = Schema.Struct({
 });
 export type OrchestrationThread = typeof OrchestrationThread.Type;
 
+export const TaskStatus = Schema.Literals([
+  "pending",
+  "planning",
+  "running",
+  "review",
+  "fixing",
+  "blocked",
+  "done",
+]);
+export type TaskStatus = typeof TaskStatus.Type;
+
+export const TaskPriority = Schema.Literals(["P0", "P1", "P2", "P3"]);
+export type TaskPriority = typeof TaskPriority.Type;
+export const DEFAULT_TASK_PRIORITY: TaskPriority = "P2";
+
+/**
+ * Legal status moves. A move that is not listed here is refused by the decider
+ * rather than merged, so a board drag can never invent a lifecycle the server
+ * does not model. Clients mirror this to grey out impossible drops; the server
+ * stays authoritative and rejects anything that slips through.
+ */
+export const TASK_STATUS_TRANSITIONS = {
+  pending: ["planning", "running", "blocked", "done"],
+  planning: ["pending", "running", "blocked"],
+  running: ["review", "blocked", "pending"],
+  review: ["done", "fixing", "pending"],
+  fixing: ["review", "running", "pending"],
+  blocked: ["pending", "running"],
+  // Reopening is the only move out of done. It is a thing humans genuinely do,
+  // not a mistake to guard against.
+  done: ["pending"],
+} as const satisfies Record<TaskStatus, ReadonlyArray<TaskStatus>>;
+
+export function canTransitionTask(from: TaskStatus, to: TaskStatus): boolean {
+  return (TASK_STATUS_TRANSITIONS[from] as ReadonlyArray<TaskStatus>).includes(to);
+}
+
+/**
+ * Task provenance. Adding a member here is how another task tool becomes
+ * importable; the import itself stays read-only in every case.
+ */
+export const TaskSource = Schema.Literals(["tower"]);
+export type TaskSource = typeof TaskSource.Type;
+
+/**
+ * A durable unit of work on a project's board. A task outlives any single
+ * thread: it is the record of what should happen, while threads are where the
+ * work actually gets done.
+ */
+export const OrchestrationTask = Schema.Struct({
+  id: TaskId,
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  status: TaskStatus,
+  priority: TaskPriority,
+  /** Goal and acceptance criteria. Empty until a human or planner writes one. */
+  body: TrimmedString,
+  labels: Schema.Array(TrimmedNonEmptyString),
+  /** Fractional index for manual arrangement within a status column. Null keeps
+      creation order, mirroring how keyless pinned threads sort. */
+  orderKey: Schema.NullOr(TrimmedNonEmptyString),
+  /** Where this task came from, for tasks t3 did not author — "tower" for a
+      task read out of a project's committed `.tower/tasks` folder. Null for a
+      task created here. Imports are read-only: the external tool stays the
+      only writer of its own files. */
+  /** Where this task's threads work. The first thread created under the task
+      establishes it; later threads join the same worktree so their edits
+      compose instead of landing in separate copies of the repository. */
+  branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  /** The agreed approach, written by hand or promoted from a thread that ran
+      in plan mode. Seeded into every new thread started on this task. */
+  planMarkdown: Schema.optional(Schema.NullOr(TrimmedString)),
+  source: Schema.optional(Schema.NullOr(TaskSource)),
+  /** Identity in the source system, unique per project. For tower this is the
+      task filename stem, which tower treats as authoritative over frontmatter.
+      Together with `source` it makes re-importing idempotent. */
+  externalId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  deletedAt: Schema.NullOr(IsoDateTime),
+});
+export type OrchestrationTask = typeof OrchestrationTask.Type;
+
 export const OrchestrationReadModel = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   projects: Schema.Array(OrchestrationProject),
   threads: Schema.Array(OrchestrationThread),
+  // Optional on the wire so snapshots from pre-task servers still decode.
+  tasks: Schema.Array(OrchestrationTask).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationReadModel = typeof OrchestrationReadModel.Type;
@@ -439,6 +619,8 @@ export const OrchestrationProjectShell = Schema.Struct({
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   // Optional on the wire so cached snapshots from older servers still decode.
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
+  contextRoot: Schema.optional(Schema.NullOr(ProjectContextRoot)),
+  remote: Schema.optional(Schema.NullOr(ProjectRemoteBinding)),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -456,6 +638,19 @@ export const OrchestrationThreadShell = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  /** Task this thread belongs to, if any. A task groups threads that share a
+      narrower context than the whole project — the work on one unit, rather
+      than everything in the repository. Optional on the wire so payloads from
+      pre-task servers still decode. */
+  taskId: Schema.optional(Schema.NullOr(TaskId)),
+  /** Parent thread when this is a sub-thread. Rides the shell (with
+      sourceQuote) deliberately: parent transcripts render quote anchors from
+      the shell stream every client already maintains, with no extra
+      subscriptions. Both are write-once at creation, so memos keyed on them
+      never churn. Optional on the wire so payloads from pre-sub-thread
+      servers still decode. */
+  parentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  sourceQuote: Schema.optional(Schema.NullOr(ThreadSourceQuote)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -501,6 +696,10 @@ export const OrchestrationShellSnapshot = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   projects: Schema.Array(OrchestrationProjectShell),
   threads: Schema.Array(OrchestrationThreadShell),
+  // Tasks ride the shell rather than a surface of their own: the board needs
+  // the same live stream the sidebar already maintains. Optional on the wire so
+  // snapshots cached by pre-task clients still decode.
+  tasks: Schema.Array(OrchestrationTask).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationShellSnapshot = typeof OrchestrationShellSnapshot.Type;
@@ -525,6 +724,16 @@ export const OrchestrationShellStreamEvent = Schema.Union([
     kind: Schema.Literal("thread-removed"),
     sequence: NonNegativeInt,
     threadId: ThreadId,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("task-upserted"),
+    sequence: NonNegativeInt,
+    task: OrchestrationTask,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("task-removed"),
+    sequence: NonNegativeInt,
+    taskId: TaskId,
   }),
 ]);
 export type OrchestrationShellStreamEvent = typeof OrchestrationShellStreamEvent.Type;
@@ -641,6 +850,8 @@ export const ProjectCreateCommand = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   createWorkspaceRootIfMissing: Schema.optional(Schema.Boolean),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  contextRoot: Schema.optional(Schema.NullOr(ProjectContextRoot)),
+  remote: Schema.optional(Schema.NullOr(ProjectRemoteBinding)),
   createdAt: IsoDateTime,
 });
 
@@ -654,6 +865,8 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   // Absent = leave unchanged; null = clear the override.
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
+  contextRoot: Schema.optional(Schema.NullOr(ProjectContextRoot)),
+  remote: Schema.optional(Schema.NullOr(ProjectRemoteBinding)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
 });
 
@@ -669,6 +882,11 @@ const ThreadCreateCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   projectId: ProjectId,
+  taskId: Schema.optional(Schema.NullOr(TaskId)),
+  /** Present when creating a sub-thread. The decider requires the parent to
+      exist, live in the same project, and not itself be a sub-thread. */
+  parentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  sourceQuote: Schema.optional(Schema.NullOr(ThreadSourceQuote)),
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
@@ -766,6 +984,8 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   type: Schema.Literal("thread.meta.update"),
   commandId: CommandId,
   threadId: ThreadId,
+  /** Absent leaves the grouping alone; null detaches the thread from its task. */
+  taskId: Schema.optional(Schema.NullOr(TaskId)),
   title: Schema.optional(TrimmedNonEmptyString),
   regenerateTitle: Schema.optional(Schema.Literal(true)),
   modelSelection: Schema.optional(ModelSelection),
@@ -909,6 +1129,76 @@ const ThreadSessionStopCommand = Schema.Struct({
   onlyIfSettled: Schema.optional(Schema.Boolean),
 });
 
+const TaskCreateCommand = Schema.Struct({
+  type: Schema.Literal("task.create"),
+  commandId: CommandId,
+  taskId: TaskId,
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  /** Opening column. Defaults to pending. Creation is not a transition, so the
+      lifecycle table does not constrain it — an import establishes where a
+      task already is, rather than moving it there. */
+  status: Schema.optional(TaskStatus),
+  priority: Schema.optional(TaskPriority),
+  body: Schema.optional(TrimmedString),
+  labels: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  orderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  planMarkdown: Schema.optional(Schema.NullOr(TrimmedString)),
+  source: Schema.optional(Schema.NullOr(TaskSource)),
+  externalId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  createdAt: IsoDateTime,
+});
+
+// Absent fields are left unchanged, matching thread.meta.update. A task's body
+// is only ever rewritten through here, so a machine write cannot silently
+// clobber prose a human typed.
+const TaskMetaUpdateCommand = Schema.Struct({
+  type: Schema.Literal("task.meta.update"),
+  commandId: CommandId,
+  taskId: TaskId,
+  title: Schema.optional(TrimmedNonEmptyString),
+  priority: Schema.optional(TaskPriority),
+  body: Schema.optional(TrimmedString),
+  labels: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  planMarkdown: Schema.optional(Schema.NullOr(TrimmedString)),
+});
+
+const TaskImportReconcileCommand = Schema.Struct({
+  type: Schema.Literal("task.import.reconcile"),
+  commandId: CommandId,
+  taskId: TaskId,
+  title: Schema.optional(TrimmedNonEmptyString),
+  status: Schema.optional(TaskStatus),
+  priority: Schema.optional(TaskPriority),
+  body: Schema.optional(TrimmedString),
+  labels: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  orderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+});
+
+const TaskStatusSetCommand = Schema.Struct({
+  type: Schema.Literal("task.status.set"),
+  commandId: CommandId,
+  taskId: TaskId,
+  status: TaskStatus,
+});
+
+const TaskReorderCommand = Schema.Struct({
+  type: Schema.Literal("task.reorder"),
+  commandId: CommandId,
+  taskId: TaskId,
+  orderKey: TrimmedNonEmptyString,
+});
+
+const TaskDeleteCommand = Schema.Struct({
+  type: Schema.Literal("task.delete"),
+  commandId: CommandId,
+  taskId: TaskId,
+});
+
 const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
@@ -933,6 +1223,11 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  TaskCreateCommand,
+  TaskMetaUpdateCommand,
+  TaskStatusSetCommand,
+  TaskReorderCommand,
+  TaskDeleteCommand,
 ]);
 export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
@@ -961,6 +1256,11 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  TaskCreateCommand,
+  TaskMetaUpdateCommand,
+  TaskStatusSetCommand,
+  TaskReorderCommand,
+  TaskDeleteCommand,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
@@ -1046,6 +1346,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
   ThreadTitleRegenerationCompleteCommand,
+  TaskImportReconcileCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -1085,10 +1386,16 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
+  "task.created",
+  "task.meta-updated",
+  "task.import-reconciled",
+  "task.status-changed",
+  "task.reordered",
+  "task.deleted",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
-export const OrchestrationAggregateKind = Schema.Literals(["project", "thread"]);
+export const OrchestrationAggregateKind = Schema.Literals(["project", "thread", "task"]);
 export type OrchestrationAggregateKind = typeof OrchestrationAggregateKind.Type;
 export const OrchestrationActorKind = Schema.Literals(["client", "server", "provider"]);
 
@@ -1100,6 +1407,8 @@ export const ProjectCreatedPayload = Schema.Struct({
   defaultModelSelection: Schema.NullOr(ModelSelection),
   // Optional so persisted events from older servers still decode.
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
+  contextRoot: Schema.optional(Schema.NullOr(ProjectContextRoot)),
+  remote: Schema.optional(Schema.NullOr(ProjectRemoteBinding)),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -1113,6 +1422,8 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
+  contextRoot: Schema.optional(Schema.NullOr(ProjectContextRoot)),
+  remote: Schema.optional(Schema.NullOr(ProjectRemoteBinding)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
   updatedAt: IsoDateTime,
 });
@@ -1125,6 +1436,9 @@ export const ProjectDeletedPayload = Schema.Struct({
 export const ThreadCreatedPayload = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
+  taskId: Schema.optional(Schema.NullOr(TaskId)),
+  parentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  sourceQuote: Schema.optional(Schema.NullOr(ThreadSourceQuote)),
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
@@ -1204,6 +1518,7 @@ export const ThreadPinReorderedPayload = Schema.Struct({
 
 export const ThreadMetaUpdatedPayload = Schema.Struct({
   threadId: ThreadId,
+  taskId: Schema.optional(Schema.NullOr(TaskId)),
   title: Schema.optional(TrimmedNonEmptyString),
   /** Intent marker consumed by the title-generation reactor. Keeping this on
       the existing event lets older clients safely ignore the new field. */
@@ -1328,11 +1643,72 @@ export const OrchestrationEventMetadata = Schema.Struct({
 });
 export type OrchestrationEventMetadata = typeof OrchestrationEventMetadata.Type;
 
+export const TaskCreatedPayload = Schema.Struct({
+  taskId: TaskId,
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  status: TaskStatus,
+  priority: TaskPriority,
+  body: TrimmedString,
+  labels: Schema.Array(TrimmedNonEmptyString),
+  orderKey: Schema.NullOr(TrimmedNonEmptyString),
+  branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  planMarkdown: Schema.optional(Schema.NullOr(TrimmedString)),
+  source: Schema.optional(Schema.NullOr(TaskSource)),
+  externalId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+
+export const TaskMetaUpdatedPayload = Schema.Struct({
+  taskId: TaskId,
+  title: Schema.optional(TrimmedNonEmptyString),
+  priority: Schema.optional(TaskPriority),
+  body: Schema.optional(TrimmedString),
+  labels: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  planMarkdown: Schema.optional(Schema.NullOr(TrimmedString)),
+  updatedAt: IsoDateTime,
+});
+
+export const TaskImportReconciledPayload = Schema.Struct({
+  taskId: TaskId,
+  title: Schema.optional(TrimmedNonEmptyString),
+  status: Schema.optional(TaskStatus),
+  priority: Schema.optional(TaskPriority),
+  body: Schema.optional(TrimmedString),
+  labels: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  orderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  updatedAt: IsoDateTime,
+});
+
+export const TaskStatusChangedPayload = Schema.Struct({
+  taskId: TaskId,
+  status: TaskStatus,
+  // Carried so the timeline reads as a move rather than a bare destination,
+  // and so a projection rebuild never has to look backwards for it.
+  previousStatus: TaskStatus,
+  updatedAt: IsoDateTime,
+});
+
+export const TaskReorderedPayload = Schema.Struct({
+  taskId: TaskId,
+  orderKey: TrimmedNonEmptyString,
+  updatedAt: IsoDateTime,
+});
+
+export const TaskDeletedPayload = Schema.Struct({
+  taskId: TaskId,
+  deletedAt: IsoDateTime,
+});
+
 const EventBaseFields = {
   sequence: NonNegativeInt,
   eventId: EventId,
   aggregateKind: OrchestrationAggregateKind,
-  aggregateId: Schema.Union([ProjectId, ThreadId]),
+  aggregateId: Schema.Union([ProjectId, ThreadId, TaskId]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),
@@ -1485,6 +1861,36 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("task.created"),
+    payload: TaskCreatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("task.meta-updated"),
+    payload: TaskMetaUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("task.import-reconciled"),
+    payload: TaskImportReconciledPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("task.status-changed"),
+    payload: TaskStatusChangedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("task.reordered"),
+    payload: TaskReorderedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("task.deleted"),
+    payload: TaskDeletedPayload,
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;

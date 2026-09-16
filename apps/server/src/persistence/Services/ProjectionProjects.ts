@@ -10,6 +10,7 @@ import {
   IsoDateTime,
   ModelSelection,
   ProjectId,
+  ProjectRemoteBinding,
   ProjectScript,
   ThreadEnvMode,
 } from "@t3tools/contracts";
@@ -27,6 +28,8 @@ export const ProjectionProject = Schema.Struct({
   defaultModelSelection: Schema.NullOr(ModelSelection),
   defaultThreadEnvMode: Schema.NullOr(ThreadEnvMode),
   faviconPath: Schema.optional(Schema.NullOr(Schema.String)),
+  contextRoot: Schema.optional(Schema.NullOr(Schema.String)),
+  remote: Schema.optional(Schema.NullOr(ProjectRemoteBinding)),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

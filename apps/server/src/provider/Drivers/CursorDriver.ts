@@ -108,6 +108,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
+      const { cwd } = yield* ServerConfig;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
@@ -132,7 +133,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       });
       const textGeneration = yield* makeCursorTextGeneration(effectiveConfig, processEnv);
 
-      const checkProvider = checkCursorProviderStatus(effectiveConfig, processEnv).pipe(
+      const checkProvider = checkCursorProviderStatus(effectiveConfig, processEnv, cwd).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

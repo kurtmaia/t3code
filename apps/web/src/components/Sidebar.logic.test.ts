@@ -13,6 +13,7 @@ import {
   hasUnseenCompletion,
   isContextMenuPointerDown,
   isSidebarNestedLinkClick,
+  nestSubThreadsInSidebarList,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
@@ -1653,5 +1654,49 @@ describe("sortLogicalProjectsForSidebar", () => {
         (project) => project.projectKey,
       ),
     ).toEqual(["logical-newer", "logical-older"]);
+  });
+});
+
+describe("nestSubThreadsInSidebarList", () => {
+  const shell = (id: string, parentThreadId: string | null = null, environmentId = "env-1") => ({
+    id,
+    environmentId,
+    parentThreadId,
+  });
+
+  it("moves children under their parent, keeping their relative order", () => {
+    const { ordered, nestedKeys } = nestSubThreadsInSidebarList([
+      shell("child-b", "parent"),
+      shell("other"),
+      shell("parent"),
+      shell("child-a", "parent"),
+    ]);
+    expect(ordered.map((thread) => thread.id)).toEqual(["other", "parent", "child-b", "child-a"]);
+    expect(nestedKeys).toEqual(new Set(["env-1:child-b", "env-1:child-a"]));
+  });
+
+  it("promotes orphans whose parent is not in the list", () => {
+    const { ordered, nestedKeys } = nestSubThreadsInSidebarList([
+      shell("orphan", "deleted-parent"),
+      shell("other"),
+    ]);
+    expect(ordered.map((thread) => thread.id)).toEqual(["orphan", "other"]);
+    expect(nestedKeys.size).toBe(0);
+  });
+
+  it("never nests across environments even when ids collide", () => {
+    const { ordered, nestedKeys } = nestSubThreadsInSidebarList([
+      shell("parent", null, "env-1"),
+      shell("child", "parent", "env-2"),
+    ]);
+    expect(ordered.map((thread) => thread.id)).toEqual(["parent", "child"]);
+    expect(nestedKeys.size).toBe(0);
+  });
+
+  it("returns the list untouched when nothing nests", () => {
+    const input = [shell("a"), shell("b")];
+    const { ordered, nestedKeys } = nestSubThreadsInSidebarList(input);
+    expect(ordered).toEqual(input);
+    expect(nestedKeys.size).toBe(0);
   });
 });

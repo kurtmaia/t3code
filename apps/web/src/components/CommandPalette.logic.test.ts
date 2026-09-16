@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import type { Thread } from "../types";
+import type { Project, Thread } from "../types";
 import {
   browseInputEndPaddingClass,
   buildBrowseGroups,
+  buildProjectActionItems,
   buildThreadActionItems,
   enumerateCommandPaletteItems,
   filterPinnedBrowseEntries,
@@ -141,6 +142,46 @@ describe("enumerateCommandPaletteItems", () => {
 
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const PROJECT_ID = ProjectId.make("project-1");
+
+function makeProject(overrides: Partial<Project> = {}): Project {
+  return {
+    environmentId: LOCAL_ENVIRONMENT_ID,
+    id: PROJECT_ID,
+    title: "Freight model",
+    workspaceRoot: "/work/freight/nam-freight-model",
+    repositoryIdentity: null,
+    defaultModelSelection: null,
+    scripts: [],
+    createdAt: "2026-03-01T00:00:00.000Z",
+    updatedAt: "2026-03-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+describe("buildProjectActionItems", () => {
+  it("includes the context group in project descriptions and search terms", () => {
+    const [item] = buildProjectActionItems({
+      projects: [makeProject({ contextRoot: "/work/freight" })],
+      valuePrefix: "project",
+      icon: () => null,
+      runProject: async () => undefined,
+    });
+
+    expect(item?.description).toBe("freight / /work/freight/nam-freight-model");
+    expect(item?.searchTerms).toContain("freight");
+  });
+
+  it("keeps the workspace-only description for an ungrouped project", () => {
+    const [item] = buildProjectActionItems({
+      projects: [makeProject()],
+      valuePrefix: "project",
+      icon: () => null,
+      runProject: async () => undefined,
+    });
+
+    expect(item?.description).toBe("/work/freight/nam-freight-model");
+  });
+});
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {

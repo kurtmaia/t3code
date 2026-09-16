@@ -11,10 +11,7 @@ import type {
 import { TrimmedNonEmptyString } from "@t3tools/contracts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
-import {
-  azureDevOpsOrganizationBaseFromRestApiUrl,
-  azureDevOpsPullRequestWebUrl,
-} from "../sourceControl/azureDevOpsPullRequests.ts";
+import { azureDevOpsPullRequestWebUrl } from "../sourceControl/azureDevOpsPullRequests.ts";
 
 /**
  * Azure's enums are decoded as plain strings and normalized here, in the same tolerant style as
@@ -108,6 +105,15 @@ const RawViewerSchema = Schema.Struct({
   ),
 });
 
+/**
+ * How a threads read is routed. The organization is not part of it: `az devops invoke` resolves
+ * that from the checkout, the way every other command here does.
+ */
+export interface AzureDevOpsThreadsRoute {
+  readonly project: string;
+  readonly repository: string;
+}
+
 export interface AzureDevOpsPullRequest {
   readonly number: number;
   readonly title: string;
@@ -128,8 +134,8 @@ export interface AzureDevOpsPullRequest {
   readonly body: string;
   readonly reviewRequestLogins: ReadonlyArray<string>;
   readonly reviewers: ReadonlyArray<PullRequestActor>;
-  /** Where this pull request's threads live, when Azure said enough to work it out. */
-  readonly threadsUrl: string | null;
+  /** What it takes to ask for this pull request's threads, when Azure named both parts. */
+  readonly threadsRoute: AzureDevOpsThreadsRoute | null;
   /** Whether Azure is set to complete this on its own once its policies pass. */
   readonly autoMergeEnabled: boolean;
 }
@@ -177,15 +183,15 @@ function toMergeability(value: string | null | undefined): PullRequestMergeabili
 }
 
 /**
- * The REST collection a pull request's threads hang from. Built from what Azure returned rather
- * than from the local remote, whose shape differs between the modern, legacy and SSH forms.
+ * Where a pull request's threads are asked for. Taken from what Azure returned rather than from
+ * the local remote, whose shape differs between the modern, legacy and SSH forms.
  */
-function toThreadsUrl(raw: Schema.Schema.Type<typeof RawPullRequestSchema>): string | null {
-  const base = azureDevOpsOrganizationBaseFromRestApiUrl(raw.url);
+function toThreadsRoute(
+  raw: Schema.Schema.Type<typeof RawPullRequestSchema>,
+): AzureDevOpsThreadsRoute | null {
   const project = trimmed(raw.repository?.project?.name);
   const repository = trimmed(raw.repository?.name);
-  if (base === null || project === null || repository === null) return null;
-  return `${base}/${encodeURIComponent(project)}/_apis/git/repositories/${encodeURIComponent(repository)}/pullRequests/${raw.pullRequestId}/threads`;
+  return project === null || repository === null ? null : { project, repository };
 }
 
 /**
@@ -230,7 +236,7 @@ function toPullRequest(
     body: raw.description ?? "",
     reviewRequestLogins: reviewers.map((reviewer) => reviewer.login),
     reviewers,
-    threadsUrl: toThreadsUrl(raw),
+    threadsRoute: toThreadsRoute(raw),
     autoMergeEnabled: (raw.autoCompleteSetBy ?? null) !== null,
   };
 }

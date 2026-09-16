@@ -6,6 +6,7 @@ import type {
   ServerProvider,
   ServerProviderAuth,
   ServerProviderModel,
+  ServerProviderSkill,
   ServerProviderState,
 } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
@@ -46,6 +47,7 @@ import {
 } from "../providerMaintenance.ts";
 import * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import { CursorListAvailableModelsResponse } from "../acp/CursorAcpExtension.ts";
+import { discoverSharedSkillsForProvider } from "../SharedSkillCatalog.ts";
 
 const decodeCursorListAvailableModelsResponse = Schema.decodeUnknownEffect(
   CursorListAvailableModelsResponse,
@@ -628,6 +630,7 @@ export function buildCursorProviderSnapshot(input: {
   readonly parsed: CursorAboutResult;
   readonly discoveredModels?: ReadonlyArray<ServerProviderModel>;
   readonly discoveryWarning?: string;
+  readonly skills?: ReadonlyArray<ServerProviderSkill>;
 }): ServerProviderDraft {
   const message = joinProviderMessages(input.parsed.message, input.discoveryWarning);
   return buildServerProvider({
@@ -639,6 +642,7 @@ export function buildCursorProviderSnapshot(input: {
       input.cursorSettings.customModels,
       EMPTY_CAPABILITIES,
     ),
+    skills: input.skills ?? [],
     probe: {
       installed: true,
       version: input.parsed.version,
@@ -987,6 +991,7 @@ const runCursorAboutCommand = (cursorSettings: CursorSettings, environment?: Nod
 export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(function* (
   cursorSettings: CursorSettings,
   environment?: NodeJS.ProcessEnv,
+  cwd?: string,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -1101,6 +1106,8 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       discoveredModels = discoveryExit.value;
     }
   }
+  const skills = yield* discoverSharedSkillsForProvider(cwd, environment);
+
   return buildCursorProviderSnapshot({
     checkedAt,
     cursorSettings,
@@ -1110,6 +1117,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       () => [] as const,
     ),
     ...(discoveryWarning ? { discoveryWarning } : {}),
+    skills,
   });
 });
 

@@ -13,6 +13,11 @@ T3 has one runtime boundary: a client talks to a T3 server over HTTP and WebSock
 owns orchestration, providers, terminals, git, and filesystem operations. Remoteness is expressed at
 the connection layer, never by splitting the runtime.
 
+One environment may _delegate command execution_ to a peer host over ssh - see
+[remote-backed projects](#remote-backed-projects) - but that does not split the runtime. Identity,
+state, projects, threads, settings, and provider credentials stay in a single server; only the
+process a command runs in moves. There is still exactly one T3 that owns the work.
+
 ```text
 ┌──────────────────────────────────────────────┐
 │ Client (desktop / mobile / web)              │
@@ -174,6 +179,48 @@ Failure handling is explicit: SSH auth failure surfaces before an environment is
 failure includes launcher output where available, forwarded-port failure leaves the environment
 disconnected rather than falling back to an unrelated endpoint, and reconnect restores the SSH bridge
 before reconnecting the WebSocket client.
+
+## Remote-backed projects
+
+A project may carry a `remote` binding: an ssh host plus a directory on it. This is the answer for a
+machine you cannot install anything on - the binding needs stock `ssh` on your side and nothing at
+all on theirs beyond a shell.
+
+It is the inverse of desktop-managed SSH above, and the two are easy to confuse:
+
+|                       | Desktop-managed SSH     | Remote-backed project |
+| --------------------- | ----------------------- | --------------------- |
+| What runs remotely    | A whole T3 server       | Nothing persistent    |
+| Threads and history   | On the remote, separate | Local, one set        |
+| Provider credentials  | On the remote           | Local, never leave    |
+| Hosts per environment | One                     | Many, one per project |
+| Needs install rights  | Yes                     | No                    |
+
+Prefer desktop-managed SSH when you can install on the host: it is the more complete model, and
+everything works there because the runtime is genuinely local to the files. Reach for a remote
+binding when you cannot.
+
+The binding lives on `OrchestrationProject.remote`
+([`packages/contracts/src/orchestration.ts`](../../packages/contracts/src/orchestration.ts)) and is
+persisted as `projection_projects.remote_binding`. `workspaceRoot` keeps meaning "a directory on
+this server's disk", so the file tree, search, git, diffs, and checkpointing are unaffected by
+whether a project is bound.
+
+Two invariants are worth knowing because they are load-bearing:
+
+- **The server resolves bindings, never the client.** `TerminalOpenInput` is a wire contract, so
+  accepting a host from a client would hand any connected client command execution on any machine
+  the server can reach. The client sends a directory; the binding comes from the project record
+  (`apps/server/src/remote/RemoteTerminalResolver.ts`).
+- **A bound project never silently falls back to local.** A remote terminal gets exactly one spawn
+  candidate and no fallback chain, and an unreachable host surfaces as an errored terminal. Dropping
+  the user onto their own machine while the UI still shows the binding would send every subsequent
+  command to the wrong filesystem.
+
+Connection policy differs from the tunnel path on purpose: remote projects enable ssh `ControlMaster`
+multiplexing, because they issue many short commands, while `packages/ssh/src/tunnel.ts` sets
+`ControlMaster=no` because a port forward owns its connection for its whole life. `ControlPath` is a
+hash under the temp root, not the state directory - unix sockets cap out near 104 bytes.
 
 ## Launch methods
 

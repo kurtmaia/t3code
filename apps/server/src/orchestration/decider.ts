@@ -1,4 +1,5 @@
 import {
+  DEFAULT_TASK_PRIORITY,
   EventId,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -11,10 +12,18 @@ import type * as PlatformError from "effect/PlatformError";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
+  listTasksByProjectId,
   listThreadsByProjectId,
+  requireActiveProjectRemoteBindingAbsent,
   requireActiveProjectWorkspaceRootAbsent,
+  requireContextRootContainsWorkspaceRoot,
+  requireLegalTaskTransition,
   requireProject,
   requireProjectAbsent,
+  requireTask,
+  requireTowerTaskSource,
+  requireTaskAbsent,
+  requireTaskSourceIdentityAbsent,
   requireThread,
   requireThreadArchived,
   requireThreadAbsent,
@@ -236,6 +245,21 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         workspaceRoot: command.workspaceRoot,
         exceptProjectId: command.projectId,
       });
+      if (typeof command.contextRoot === "string") {
+        yield* requireContextRootContainsWorkspaceRoot({
+          command,
+          workspaceRoot: command.workspaceRoot,
+          contextRoot: command.contextRoot,
+        });
+      }
+      if (command.remote != null) {
+        yield* requireActiveProjectRemoteBindingAbsent({
+          readModel,
+          command,
+          remote: command.remote,
+          exceptProjectId: command.projectId,
+        });
+      }
 
       return {
         ...(yield* withEventBase({
@@ -251,6 +275,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           workspaceRoot: command.workspaceRoot,
           defaultModelSelection: command.defaultModelSelection ?? null,
           faviconPath: null,
+          contextRoot: command.contextRoot ?? null,
+          remote: command.remote ?? null,
           scripts: [],
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
@@ -259,7 +285,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "project.meta.update": {
-      yield* requireProject({
+      const project = yield* requireProject({
         readModel,
         command,
         projectId: command.projectId,
@@ -271,6 +297,26 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           workspaceRoot: command.workspaceRoot,
           exceptProjectId: command.projectId,
         });
+      }
+      if (command.remote != null) {
+        yield* requireActiveProjectRemoteBindingAbsent({
+          readModel,
+          command,
+          remote: command.remote,
+          exceptProjectId: command.projectId,
+        });
+      }
+      // Either side of the containment can move; check the pair that will be in force.
+      if (command.workspaceRoot !== undefined || command.contextRoot !== undefined) {
+        const effectiveContextRoot =
+          command.contextRoot === undefined ? (project.contextRoot ?? null) : command.contextRoot;
+        if (effectiveContextRoot !== null) {
+          yield* requireContextRootContainsWorkspaceRoot({
+            command,
+            workspaceRoot: command.workspaceRoot ?? project.workspaceRoot,
+            contextRoot: effectiveContextRoot,
+          });
+        }
       }
       const occurredAt = yield* nowIso;
       return {
@@ -292,6 +338,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             ? { defaultThreadEnvMode: command.defaultThreadEnvMode }
             : {}),
           ...(command.faviconPath !== undefined ? { faviconPath: command.faviconPath } : {}),
+          ...(command.contextRoot !== undefined ? { contextRoot: command.contextRoot } : {}),
+          ...(command.remote !== undefined ? { remote: command.remote } : {}),
           ...(command.scripts !== undefined ? { scripts: command.scripts } : {}),
           updatedAt: occurredAt,
         },
@@ -313,7 +361,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: `Project '${command.projectId}' is not empty and cannot be deleted without force=true.`,
         });
       }
-      if (activeThreads.length > 0) {
+      // Tasks cascade but never block the delete: unlike a thread they own no
+      // running session, and a board left behind by a removed project would
+      // render as cards belonging to nothing.
+      const activeTasks = listTasksByProjectId(readModel, command.projectId).filter(
+        (task) => task.deletedAt === null,
+      );
+      if (activeThreads.length > 0 || activeTasks.length > 0) {
         return yield* decideCommandSequence({
           readModel,
           commands: [
@@ -322,6 +376,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
                 type: "thread.delete",
                 commandId: command.commandId,
                 threadId: thread.id,
+              }),
+            ),
+            ...activeTasks.map(
+              (task): Extract<OrchestrationCommand, { type: "task.delete" }> => ({
+                type: "task.delete",
+                commandId: command.commandId,
+                taskId: task.id,
               }),
             ),
             {
@@ -360,6 +421,34 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      const parentThreadId = command.parentThreadId ?? null;
+      const parentThread = parentThreadId
+        ? yield* requireThread({
+            readModel,
+            command,
+            threadId: parentThreadId,
+          })
+        : null;
+      if (parentThread && parentThread.projectId !== command.projectId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Parent thread '${parentThread.id}' belongs to a different project.`,
+        });
+      }
+      // Sub-threads nest one level: a side conversation about a side
+      // conversation flattens onto the same parent instead.
+      if (parentThread && (parentThread.parentThreadId ?? null) !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${parentThread.id}' is itself a sub-thread and cannot parent another.`,
+        });
+      }
+      if (!parentThread && command.sourceQuote) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "A source quote requires a parent thread.",
+        });
+      }
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -371,6 +460,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           projectId: command.projectId,
+          taskId: command.taskId ?? null,
+          parentThreadId,
+          sourceQuote: command.sourceQuote ?? null,
           title: command.title,
           modelSelection: command.modelSelection,
           runtimeMode: command.runtimeMode,
@@ -828,6 +920,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.meta-updated",
         payload: {
           threadId: command.threadId,
+          ...(command.taskId !== undefined ? { taskId: command.taskId } : {}),
           ...(command.title !== undefined ? { title: command.title } : {}),
           ...(command.regenerateTitle === true
             ? {
@@ -1400,6 +1493,200 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         },
       };
       return [unsettledEvent, activityAppendedEvent];
+    }
+
+    case "task.create": {
+      yield* requireTaskAbsent({
+        readModel,
+        command,
+        taskId: command.taskId,
+      });
+      yield* requireProject({
+        readModel,
+        command,
+        projectId: command.projectId,
+      });
+      // Importing the same external task twice is the expected case (a project
+      // re-added, an importer re-run), not an error the caller must avoid.
+      yield* requireTaskSourceIdentityAbsent({
+        readModel,
+        command,
+        projectId: command.projectId,
+        source: command.source ?? null,
+        externalId: command.externalId ?? null,
+      });
+
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "task",
+          aggregateId: command.taskId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "task.created",
+        payload: {
+          taskId: command.taskId,
+          projectId: command.projectId,
+          title: command.title,
+          // Defaults to pending; an importer states where the task already
+          // is. Not a transition, so TASK_STATUS_TRANSITIONS does not apply.
+          status: command.status ?? "pending",
+          priority: command.priority ?? DEFAULT_TASK_PRIORITY,
+          body: command.body ?? "",
+          labels: command.labels ?? [],
+          orderKey: command.orderKey ?? null,
+          branch: command.branch ?? null,
+          worktreePath: command.worktreePath ?? null,
+          planMarkdown: command.planMarkdown ?? null,
+          source: command.source ?? null,
+          externalId: command.externalId ?? null,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "task.meta.update": {
+      yield* requireTask({
+        readModel,
+        command,
+        taskId: command.taskId,
+      });
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "task",
+          aggregateId: command.taskId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "task.meta-updated",
+        payload: {
+          taskId: command.taskId,
+          ...(command.title !== undefined ? { title: command.title } : {}),
+          ...(command.priority !== undefined ? { priority: command.priority } : {}),
+          ...(command.body !== undefined ? { body: command.body } : {}),
+          ...(command.labels !== undefined ? { labels: command.labels } : {}),
+          ...(command.branch !== undefined ? { branch: command.branch } : {}),
+          ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
+          ...(command.planMarkdown !== undefined ? { planMarkdown: command.planMarkdown } : {}),
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
+    case "task.import.reconcile": {
+      const task = yield* requireTask({
+        readModel,
+        command,
+        taskId: command.taskId,
+      });
+      yield* requireTowerTaskSource({ command, task });
+      const occurredAt = yield* nowIso;
+      // This is reconciliation, not a board move: tower is authoritative and
+      // may establish any status, including moves rejected by the UI lifecycle.
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "task",
+          aggregateId: command.taskId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "task.import-reconciled",
+        payload: {
+          taskId: command.taskId,
+          ...(command.title !== undefined ? { title: command.title } : {}),
+          ...(command.status !== undefined ? { status: command.status } : {}),
+          ...(command.priority !== undefined ? { priority: command.priority } : {}),
+          ...(command.body !== undefined ? { body: command.body } : {}),
+          ...(command.labels !== undefined ? { labels: command.labels } : {}),
+          ...(command.orderKey !== undefined ? { orderKey: command.orderKey } : {}),
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
+    case "task.status.set": {
+      const task = yield* requireTask({
+        readModel,
+        command,
+        taskId: command.taskId,
+      });
+      yield* requireLegalTaskTransition({
+        command,
+        taskId: command.taskId,
+        from: task.status,
+        to: command.status,
+      });
+      const occurredAt = yield* nowIso;
+      // Dropping a card back where it started is a duplicate (double-drop,
+      // raced clients), not a move: re-emit carrying the task's existing
+      // updatedAt so the projection is a no-op. The engine requires every
+      // command to produce an event, so this cannot just return nothing.
+      const unchanged = task.status === command.status;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "task",
+          aggregateId: command.taskId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "task.status-changed",
+        payload: {
+          taskId: command.taskId,
+          status: command.status,
+          previousStatus: task.status,
+          updatedAt: unchanged ? task.updatedAt : occurredAt,
+        },
+      };
+    }
+
+    case "task.reorder": {
+      const task = yield* requireTask({
+        readModel,
+        command,
+        taskId: command.taskId,
+      });
+      const occurredAt = yield* nowIso;
+      // Same rule as a redundant status set: re-emit as a projection no-op
+      // rather than returning nothing.
+      const unmoved = task.orderKey === command.orderKey;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "task",
+          aggregateId: command.taskId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "task.reordered",
+        payload: {
+          taskId: command.taskId,
+          orderKey: command.orderKey,
+          updatedAt: unmoved ? task.updatedAt : occurredAt,
+        },
+      };
+    }
+
+    case "task.delete": {
+      yield* requireTask({
+        readModel,
+        command,
+        taskId: command.taskId,
+      });
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "task",
+          aggregateId: command.taskId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "task.deleted",
+        payload: {
+          taskId: command.taskId,
+          deletedAt: occurredAt,
+        },
+      };
     }
 
     default: {

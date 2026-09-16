@@ -65,3 +65,59 @@ export class FilesystemBrowseError extends Schema.TaggedErrorClass<FilesystemBro
     } as any);
   }
 }
+
+export const FilesystemDiscoverRepositoriesInput = Schema.Struct({
+  path: TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH)),
+});
+export type FilesystemDiscoverRepositoriesInput = typeof FilesystemDiscoverRepositoriesInput.Type;
+
+export const FilesystemDiscoveredRepository = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  path: TrimmedNonEmptyString,
+});
+export type FilesystemDiscoveredRepository = typeof FilesystemDiscoveredRepository.Type;
+
+/**
+ * What a folder looks like before it becomes a project: whether it is a repository itself,
+ * and which of its direct children are. Lets the add-project flow offer a multi-repo folder
+ * as one project per repository instead of one project that git cannot see into.
+ */
+export const FilesystemDiscoverRepositoriesResult = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  isRepository: Schema.Boolean,
+  repositories: Schema.Array(FilesystemDiscoveredRepository),
+});
+export type FilesystemDiscoverRepositoriesResult = typeof FilesystemDiscoverRepositoriesResult.Type;
+
+export const FilesystemDiscoverRepositoriesFailure = Schema.Literals([
+  "windows_path_unsupported",
+  "read_directory_failed",
+]);
+export type FilesystemDiscoverRepositoriesFailure =
+  typeof FilesystemDiscoverRepositoriesFailure.Type;
+
+export class FilesystemDiscoverRepositoriesError extends Schema.TaggedErrorClass<FilesystemDiscoverRepositoriesError>()(
+  "FilesystemDiscoverRepositoriesError",
+  {
+    path: TrimmedNonEmptyString,
+    failure: FilesystemDiscoverRepositoriesFailure,
+    platform: Schema.optional(TrimmedNonEmptyString),
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  // @effect-diagnostics-next-line overriddenSchemaConstructor:off
+  constructor(props: {
+    readonly path: string;
+    readonly failure: FilesystemDiscoverRepositoriesFailure;
+    readonly platform?: string;
+    readonly cause?: unknown;
+  }) {
+    super({
+      ...props,
+      message:
+        decodedFilesystemBrowseErrorMessage(props) ??
+        `Failed to discover repositories under '${props.path}'.`,
+    } as any);
+  }
+}

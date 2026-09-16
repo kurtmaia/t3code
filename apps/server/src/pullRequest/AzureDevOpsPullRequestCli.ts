@@ -1,6 +1,8 @@
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
@@ -43,7 +45,10 @@ export class AzureDevOpsPullRequestReadError extends Schema.TaggedErrorClass<Azu
   }
 }
 
-/** Not a decode failure: az answered, the account it answered for just has no name. */
+/**
+ * Not a decode failure: az has no name to give for whoever is signed in. A PAT sign-in never
+ * has one, and an Entra sign-in can answer for an account that carries none.
+ */
 export class AzureDevOpsViewerUnavailableError extends Schema.TaggedErrorClass<AzureDevOpsViewerUnavailableError>()(
   "AzureDevOpsViewerUnavailableError",
   {
@@ -52,7 +57,10 @@ export class AzureDevOpsViewerUnavailableError extends Schema.TaggedErrorClass<A
   },
 ) {
   get detail(): string {
-    return "Azure CLI returned no account for the current sign-in.";
+    return (
+      "Azure CLI could not name the signed-in user. A personal access token identifies nobody, " +
+      "so set T3CODE_AZURE_DEVOPS_USER to the email address or identity id that means you."
+    );
   }
 
   override get message(): string {
@@ -109,7 +117,10 @@ export type AzureDevOpsPullRequestCliError =
   | AzureDevOpsReviewerNameError
   | AzureDevOpsViewerUnavailableError;
 
-/** The version every REST call below is pinned to, so a new default cannot reshape a response. */
+/**
+ * The version every REST call below is pinned to, so a new default cannot reshape a response.
+ * `az devops invoke` defaults to 5.0, which is old enough to matter.
+ */
 const REST_API_VERSION = "7.1";
 
 export class AzureDevOpsPullRequestCli extends Context.Service<
@@ -146,10 +157,21 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly number: number;
     }) => Effect.Effect<AzureDevOpsPullRequest, AzureDevOpsPullRequestCliError>;
 
-    /** Threads are not reachable through `az repos pr`, so they come from the REST API. */
+    /**
+     * Threads are not reachable through `az repos pr`, so they come from the REST API — asked for
+     * through `az devops invoke`, which carries the same sign-in the rest of these commands use.
+     *
+     * `az rest` cannot do it. It attaches a bearer token only for a URL it recognises as one of
+     * Azure's own endpoints, and dev.azure.com is not among them, so the request leaves with no
+     * `Authorization` header at all. Azure DevOps answers an anonymous read with its sign-in page
+     * and a successful status, which is HTML on a zero exit: a conversation that reads as empty
+     * rather than as refused.
+     */
     readonly listThreads: (input: {
       readonly cwd: string;
-      readonly threadsUrl: string;
+      readonly project: string;
+      readonly repository: string;
+      readonly number: number;
     }) => Effect.Effect<ReadonlyArray<PullRequestComment>, AzureDevOpsPullRequestCliError>;
 
     readonly runPullRequestAction: (input: {
@@ -250,8 +272,16 @@ function isReviewerName(value: string): boolean {
   return name.length > 0 && !name.startsWith("-");
 }
 
+/**
+ * Who "me" is on Azure DevOps. `az repos pr list` narrows by `--creator`/`--reviewer`, both of
+ * which take an email address, a display name or an identity id, so this is whichever of those
+ * names the reader. Only needed for a PAT sign-in, which no `az` command resolves to a user.
+ */
+const AzureDevOpsViewerEnvConfig = Config.string("T3CODE_AZURE_DEVOPS_USER").pipe(Config.option);
+
 export const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
+  const configuredViewer = yield* AzureDevOpsViewerEnvConfig;
 
   // Every command resolves the organization, project and repository from the checkout, which is
   // what the rest of the Azure wrapper does. The remote takes three shapes and only `az` knows
@@ -357,27 +387,44 @@ export const make = Effect.gen(function* () {
   };
 
   return AzureDevOpsPullRequestCli.of({
+    /**
+     * Azure DevOps has two sign-ins and only one of them has a name to give back. `az login`
+     * carries an Entra identity that `az account show` can report; `az devops login` carries a
+     * PAT, which identifies nobody and leaves that command failing outright. So a configured
+     * viewer wins, the sign-in is only asked when nothing was configured, and neither answering
+     * reports the viewer as unavailable rather than as a broken CLI — a viewer is what narrows a
+     * listing to "mine", and a listing without one comes back unnarrowed instead of refused.
+     */
     getViewer: (input) =>
-      executeJson({ cwd: input.cwd, args: ["account", "show", "--query", "user"] }).pipe(
-        Effect.flatMap((result): Effect.Effect<string, AzureDevOpsPullRequestCliError> => {
-          // `--query user` narrows the payload to the account, so it is nested back under the
-          // key the decoder reads to keep one shape for the signed-in user.
-          const decoded = decodeViewerJson(`{"user":${result.stdout.trim() || "null"}}`);
-          if (!Result.isSuccess(decoded)) {
-            return Effect.fail(
-              new AzureDevOpsPullRequestReadError({
-                command: "az",
-                cwd: input.cwd,
-                operation: "getViewer",
-                cause: decoded.failure,
-              }),
-            );
-          }
-          return decoded.success === null
-            ? Effect.fail(new AzureDevOpsViewerUnavailableError({ command: "az", cwd: input.cwd }))
-            : Effect.succeed(decoded.success);
-        }),
-      ),
+      Option.isSome(configuredViewer)
+        ? Effect.succeed(configuredViewer.value)
+        : executeJson({ cwd: input.cwd, args: ["account", "show", "--query", "user"] }).pipe(
+            Effect.flatMap((result): Effect.Effect<string, AzureDevOpsPullRequestCliError> => {
+              // `--query user` narrows the payload to the account, so it is nested back under the
+              // key the decoder reads to keep one shape for the signed-in user.
+              const decoded = decodeViewerJson(`{"user":${result.stdout.trim() || "null"}}`);
+              if (!Result.isSuccess(decoded)) {
+                return Effect.fail(
+                  new AzureDevOpsPullRequestReadError({
+                    command: "az",
+                    cwd: input.cwd,
+                    operation: "getViewer",
+                    cause: decoded.failure,
+                  }),
+                );
+              }
+              return decoded.success === null
+                ? Effect.fail(
+                    new AzureDevOpsViewerUnavailableError({ command: "az", cwd: input.cwd }),
+                  )
+                : Effect.succeed(decoded.success);
+            }),
+            // A PAT sign-in leaves `az account show` exiting non-zero, which is the shape of a
+            // failed command but the meaning of an unnamed viewer.
+            Effect.catch(() =>
+              Effect.fail(new AzureDevOpsViewerUnavailableError({ command: "az", cwd: input.cwd })),
+            ),
+          ),
 
     listPullRequests: (input) =>
       listPullRequestPage({
@@ -433,11 +480,23 @@ export const make = Effect.gen(function* () {
       executeJson({
         cwd: input.cwd,
         args: [
-          "rest",
-          "--method",
-          "get",
-          "--url",
-          `${input.threadsUrl}?api-version=${REST_API_VERSION}`,
+          "devops",
+          "invoke",
+          ...detectArgs,
+          "--area",
+          "git",
+          "--resource",
+          "pullRequestThreads",
+          "--api-version",
+          REST_API_VERSION,
+          // Named rather than routed by url, so the organization comes from the checkout and an
+          // on-premises collection is reached by the same call as a hosted organization. Azure
+          // allows none of `=`, `/` or `:` in a project or repository name, so a name cannot
+          // break out of the `key=value` a route parameter is read as.
+          "--route-parameters",
+          `project=${input.project}`,
+          `repositoryId=${input.repository}`,
+          `pullRequestId=${input.number}`,
         ],
       }).pipe(
         Effect.flatMap((result) => {

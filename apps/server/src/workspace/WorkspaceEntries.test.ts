@@ -634,6 +634,68 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
     );
   });
 
+  describe("discoverRepositories", () => {
+    it.effect("reports a repository root with no children to add", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const cwd = yield* makeTempDir({ prefix: "t3code-discover-root-", git: true });
+        yield* writeTextFile(cwd, "packages/web/index.ts", "export {};\n");
+
+        const result = yield* workspaceEntries.discoverRepositories({ path: cwd });
+
+        expect(result).toEqual({ path: cwd, isRepository: true, repositories: [] });
+      }),
+    );
+
+    it.effect("lists direct child repositories and skips hidden and dependency folders", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const root = yield* makeTempDir({ prefix: "t3code-discover-folder-" });
+        for (const name of [
+          "nam-freight-model",
+          "nam-freight-data",
+          ".hidden-repo",
+          "node_modules",
+        ]) {
+          yield* writeTextFile(root, `${name}/README.md`, "# repo\n");
+          yield* git(path.join(root, name), ["init"]);
+        }
+        yield* writeTextFile(root, "meetings/2026-08-01.md", "notes\n");
+        yield* writeTextFile(root, "nested/deeper-repo/README.md", "# nested\n");
+        yield* git(path.join(root, "nested", "deeper-repo"), ["init"]);
+
+        const result = yield* workspaceEntries.discoverRepositories({
+          path: `${root}${path.sep}`,
+        });
+
+        expect(result).toEqual({
+          path: root,
+          isRepository: false,
+          repositories: [
+            { name: "nam-freight-data", path: path.join(root, "nam-freight-data") },
+            { name: "nam-freight-model", path: path.join(root, "nam-freight-model") },
+          ],
+        });
+      }),
+    );
+
+    it.effect("treats an unreadable folder as empty rather than failing", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const root = yield* makeTempDir({ prefix: "t3code-discover-unreadable-" });
+        vi.mocked(NodeFSP.readdir).mockRejectedValueOnce(
+          Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" }),
+        );
+
+        const result = yield* workspaceEntries.discoverRepositories({ path: root });
+
+        expect(result.repositories).toEqual([]);
+        expect(result.isRepository).toBe(false);
+      }),
+    );
+  });
+
   describe("browse", () => {
     it.effect("returns matching directories and excludes files", () =>
       Effect.gen(function* () {

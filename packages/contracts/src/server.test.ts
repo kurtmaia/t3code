@@ -47,6 +47,29 @@ describe("ServerProvider", () => {
     expect(parsed.updateState).toBeUndefined();
   });
 
+  it("decodes a skill layered in from the shared cross-provider catalog", () => {
+    const parsed = decodeServerProvider({
+      ...baseProviderSnapshot,
+      skills: [
+        {
+          name: "second-opinion",
+          path: "/home/user/.claude/skills/second-opinion/SKILL.md",
+          enabled: true,
+          origin: "shared",
+        },
+      ],
+    });
+
+    expect(parsed.skills).toEqual([
+      {
+        name: "second-opinion",
+        path: "/home/user/.claude/skills/second-opinion/SKILL.md",
+        enabled: true,
+        origin: "shared",
+      },
+    ]);
+  });
+
   it("defaults one-click update support when decoding older advisory snapshots", () => {
     const parsed = decodeServerProvider({
       instanceId: "codex",

@@ -42,6 +42,7 @@ const readModel: OrchestrationReadModel = {
       session: null,
     },
   ],
+  tasks: [],
   updatedAt: UPDATED_AT,
 };
 

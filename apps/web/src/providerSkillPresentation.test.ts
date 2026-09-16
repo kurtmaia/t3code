@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   formatProviderSkillDisplayName,
   formatProviderSkillInstallSource,
+  formatProviderSkillOrigin,
 } from "./providerSkillPresentation";
 
 describe("formatProviderSkillDisplayName", () => {
@@ -53,5 +54,16 @@ describe("formatProviderSkillInstallSource", () => {
         scope: "project",
       }),
     ).toBe("Project");
+  });
+});
+
+describe("formatProviderSkillOrigin", () => {
+  it("labels a shared cross-provider skill", () => {
+    expect(formatProviderSkillOrigin({ origin: "shared" })).toBe("Shared");
+  });
+
+  it("returns null for a provider's own native skill", () => {
+    expect(formatProviderSkillOrigin({ origin: "native" })).toBeNull();
+    expect(formatProviderSkillOrigin({ origin: undefined })).toBeNull();
   });
 });

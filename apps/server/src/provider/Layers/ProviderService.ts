@@ -577,6 +577,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     );
   });
 
+  // Threads whose next turn should open with a note about the project's context root.
+  // Set when a session starts, cleared when the note is sent, so it rides the first turn of
+  // every new or restarted session and no other. Providers with a native grant get it too:
+  // knowing *why* a directory is readable is worth one line.
+  const pendingContextHints = new Map<ThreadId, string>();
+
   const startSession: ProviderServiceMethod<"startSession"> = Effect.fn("startSession")(
     function* (threadId, rawInput) {
       const parsed = yield* decodeInputOrValidationError({
@@ -677,6 +683,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         yield* upsertSessionBinding(sessionWithInstance, threadId, {
           modelSelection: input.modelSelection,
         });
+        if (input.contextRoot !== undefined) {
+          pendingContextHints.set(threadId, input.contextRoot);
+        } else {
+          pendingContextHints.delete(threadId);
+        }
         yield* analytics.record("provider.session.started", {
           provider: sessionWithInstance.provider,
           runtimeMode: input.runtimeMode,
@@ -744,10 +755,19 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         ? []
         : [`[Attached ${attachment.type} "${attachment.name}" is saved at: ${attachmentPath}]`];
     });
+    const contextRoot = pendingContextHints.get(parsed.threadId);
+    pendingContextHints.delete(parsed.threadId);
+    const contextHintLines =
+      contextRoot === undefined
+        ? []
+        : [
+            `[This project is part of "${directoryDisplayName(contextRoot)}"; related repositories and shared notes live at: ${contextRoot}. You may read there.]`,
+          ];
+    const appendedLines = [...attachmentPathLines, ...contextHintLines];
     const inputTextWithAttachmentPaths =
-      attachmentPathLines.length === 0
+      appendedLines.length === 0
         ? parsed.input
-        : [parsed.input, attachmentPathLines.join("\n")]
+        : [parsed.input, appendedLines.join("\n")]
             .filter((part): part is string => typeof part === "string" && part.length > 0)
             .join("\n\n");
 
@@ -958,6 +978,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         if (routed.isActive) {
           yield* routed.adapter.stopSession(routed.threadId);
         }
+        pendingContextHints.delete(input.threadId);
         yield* clearMcpSession(input.threadId);
         yield* directory.upsert({
           threadId: input.threadId,
@@ -1196,6 +1217,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   } satisfies ProviderService.ProviderService["Service"];
 });
+
+/** The last path segment, tolerant of a trailing separator on either platform. */
+function directoryDisplayName(directory: string): string {
+  const segments = directory.replace(/[\\/]+$/u, "").split(/[\\/]/u);
+  return segments[segments.length - 1] || directory;
+}
 
 export const ProviderServiceLive = Layer.effect(
   ProviderService.ProviderService,

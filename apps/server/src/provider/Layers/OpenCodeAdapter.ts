@@ -29,6 +29,7 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { formatResolvedSkillsPromptText } from "../resolvedSkillInstructions.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import {
   ProviderAdapterProcessError,
@@ -1279,7 +1280,9 @@ export function makeOpenCodeAdapter(
                   yield* runOpenCodeSdk("session.update", () =>
                     client.session.update({
                       sessionID: reusable.id,
-                      permission: buildOpenCodePermissionRules(input.runtimeMode),
+                      permission: buildOpenCodePermissionRules(input.runtimeMode, {
+                        contextRoot: input.contextRoot,
+                      }),
                     }),
                   );
                   return { openCodeSession: reusable, created: false };
@@ -1306,7 +1309,9 @@ export function makeOpenCodeAdapter(
                   yield* runOpenCodeSdk("session.update", () =>
                     client.session.update({
                       sessionID: forked.id,
-                      permission: buildOpenCodePermissionRules(input.runtimeMode),
+                      permission: buildOpenCodePermissionRules(input.runtimeMode, {
+                        contextRoot: input.contextRoot,
+                      }),
                     }),
                   );
                   return { openCodeSession: forked, created: true };
@@ -1320,7 +1325,9 @@ export function makeOpenCodeAdapter(
                 const createdSession = yield* runOpenCodeSdk("session.create", () =>
                   client.session.create({
                     ...(input.title ? { title: input.title } : {}),
-                    permission: buildOpenCodePermissionRules(input.runtimeMode),
+                    permission: buildOpenCodePermissionRules(input.runtimeMode, {
+                      contextRoot: input.contextRoot,
+                    }),
                   }),
                 );
                 if (!createdSession.data) {
@@ -1505,7 +1512,18 @@ export function makeOpenCodeAdapter(
           model: parsedModel,
           ...(context.activeAgent ? { agent: context.activeAgent } : {}),
           ...(context.activeVariant ? { variant: context.activeVariant } : {}),
-          parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
+          parts: [
+            ...(input.resolvedSkills?.length
+              ? [
+                  {
+                    type: "text" as const,
+                    text: formatResolvedSkillsPromptText(input.resolvedSkills),
+                  },
+                ]
+              : []),
+            ...(text ? [{ type: "text" as const, text }] : []),
+            ...fileParts,
+          ],
         }),
       ).pipe(
         Effect.mapError(toRequestError),

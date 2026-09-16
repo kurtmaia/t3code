@@ -11,6 +11,7 @@ import {
   effectiveSnoozed,
   type ChangeRequestSettleSource,
 } from "@t3tools/client-runtime/state/thread-settled";
+import { TaskId } from "@t3tools/contracts";
 import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { useCallback } from "react";
 
@@ -24,6 +25,7 @@ import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
   readEnvironmentSupportsPinning,
+  readTasksForProject,
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
   readEnvironmentSupportsTitleRegeneration,
@@ -124,6 +126,10 @@ export function useThreadActionMenu(input: {
         };
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const snoozePresets = resolveSnoozePresets(now, timestampFormat);
+        const projectTasks = readTasksForProject({
+          environmentId: threadRef.environmentId,
+          projectId: thread.projectId,
+        });
         const items = buildThreadActionMenuItems({
           branch: thread.branch ?? null,
           isPinned: thread.pinnedAt != null,
@@ -144,10 +150,30 @@ export function useThreadActionMenu(input: {
           isRunning: thread.session?.status === "running" && thread.session.activeTurnId != null,
           supports,
           snoozePresets,
+          tasks: projectTasks.map((task) => ({ id: task.id, title: task.title })),
+          currentTaskId: thread.taskId ?? null,
         });
         const clicked = await settlePromise(() => api.contextMenu.show(items, position));
         if (clicked._tag === "Failure" || clicked.value === null) return;
         const action: ThreadActionMenuId = clicked.value;
+        if (action.startsWith("assign-task:")) {
+          const raw = action.slice("assign-task:".length);
+          // The parent row carries the same id as "remove"; clicking it with
+          // no task attached is a no-op rather than a stray dispatch.
+          const nextTaskId = raw === "none" ? null : TaskId.make(raw);
+          if ((thread.taskId ?? null) === nextTaskId) return;
+          const assigned = await updateThreadMetadata({
+            environmentId: threadRef.environmentId,
+            input: { threadId: threadRef.threadId, taskId: nextTaskId },
+          });
+          if (assigned._tag === "Failure" && !isAtomCommandInterrupted(assigned)) {
+            failureToast(
+              nextTaskId === null ? "Failed to remove from task" : "Failed to assign task",
+              squashAtomCommandFailure(assigned),
+            );
+          }
+          return;
+        }
         if (action.startsWith("snooze:")) {
           const preset = snoozePresets.find((candidate) => `snooze:${candidate.id}` === action);
           if (!preset) return;

@@ -59,6 +59,11 @@ import {
 } from "../observability/Metrics.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
+import {
+  buildRemoteTerminalCandidate,
+  type RemoteTerminalTarget,
+} from "../remote/RemoteTerminal.ts";
+import { RemoteTerminalResolver } from "../remote/RemoteTerminalResolver.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
 
 export {
@@ -263,6 +268,8 @@ export interface TerminalSessionState {
   /** Normalized child command name when `hasRunningSubprocess`; cleared when idle. */
   childCommandLabel: string | null;
   runtimeEnv: Record<string, string> | null;
+  /** Set when this terminal runs on another host; null for ordinary local terminals. */
+  remote: RemoteTerminalTarget | null;
 }
 
 interface PersistHistoryRequest {
@@ -519,6 +526,17 @@ function windowsPowerShellPath(env: NodeJS.ProcessEnv): string {
 
 function windowsCmdPath(env: NodeJS.ProcessEnv): string {
   return joinWindowsPath(windowsSystemRoot(env), "System32", "cmd.exe");
+}
+
+/**
+ * The single spawn candidate for a terminal that lives on another host.
+ *
+ * `formatShellCandidate` renders this into the session's shell label and into spawn-error
+ * messages, so a failure says which host was attempted rather than just "ssh".
+ */
+function candidateFromRemote(remote: RemoteTerminalTarget): ShellCandidate {
+  const candidate = buildRemoteTerminalCandidate(remote);
+  return { shell: candidate.shell, args: [...candidate.args] };
 }
 
 function formatShellCandidate(candidate: ShellCandidate): string {
@@ -1113,6 +1131,15 @@ interface TerminalManagerOptions {
   historyLineLimit?: number;
   ptyAdapter: PtyAdapter.PtyAdapter["Service"];
   shellResolver?: () => string;
+  /**
+   * Resolves the remote binding for a session's directory, or null for an ordinary local
+   * terminal. Injected rather than read from the read model so the manager keeps its narrow
+   * dependencies, and server-owned rather than client-supplied so a client cannot name an
+   * arbitrary ssh host and get command execution on it.
+   */
+  remoteTerminalResolver?: (
+    cwd: string,
+  ) => Effect.Effect<RemoteTerminalTarget | null, PtyAdapter.PtySpawnError>;
   env?: NodeJS.ProcessEnv;
   subprocessInspector?: TerminalSubprocessInspector;
   subprocessPollIntervalMs?: number;
@@ -1133,11 +1160,25 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
   const { terminalLogsDir } = yield* ServerConfig.ServerConfig;
   const ptyAdapter = yield* PtyAdapter.PtyAdapter;
   const portDiscovery = yield* PortScanner.PortDiscovery;
+  const remoteResolver = yield* RemoteTerminalResolver;
   return yield* makeWithOptions({
     logsDir: terminalLogsDir,
     ptyAdapter,
     registerTerminalProcesses: portDiscovery.registerTerminalProcesses,
     unregisterTerminal: portDiscovery.unregisterTerminal,
+    // A binding that cannot be reached becomes a spawn failure, which the manager already
+    // renders as an errored terminal carrying the reason.
+    remoteTerminalResolver: (cwd) =>
+      remoteResolver.resolve(cwd).pipe(
+        Effect.mapError(
+          (cause) =>
+            new PtyAdapter.PtySpawnError({
+              adapter: "remote-terminal",
+              shell: "ssh",
+              cause,
+            }),
+        ),
+      ),
   });
 });
 
@@ -1158,6 +1199,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   // `options.env` is the test seam.
   const baseEnv = options.env ?? process.env;
   const shellResolver = options.shellResolver ?? (() => defaultShellResolver(platform, baseEnv));
+  const resolveRemoteTerminal = (
+    cwd: string,
+  ): Effect.Effect<RemoteTerminalTarget | null, PtyAdapter.PtySpawnError> =>
+    options.remoteTerminalResolver?.(cwd) ?? Effect.succeed(null);
   const processRunner = yield* ProcessRunner.ProcessRunner;
   // One process-table snapshot per poll tick, shared across every terminal.
   // Per-terminal `pgrep`/`ps` calls multiply spawn load by terminal count and
@@ -1867,7 +1912,18 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       increment(terminalSessionsTotal, { lifecycle: eventType }).pipe(
         Effect.andThen(
           Effect.gen(function* () {
-            const shellCandidates = resolveShellCandidates(shellResolver, platform, baseEnv);
+            // Resolved per start rather than per session: a restart is a deliberate
+            // relaunch, and a project can be bound or unbound between one run and the next.
+            // Failing here lands in the same place a spawn failure does, so a host that
+            // cannot be reached shows up as an errored terminal saying so.
+            session.remote = yield* resolveRemoteTerminal(session.cwd);
+
+            // A remote terminal gets exactly one candidate and no fallback list. Falling
+            // back to a local shell when ssh fails would silently drop the user onto their
+            // own machine while the UI still says they are on the remote host.
+            const shellCandidates = session.remote
+              ? [candidateFromRemote(session.remote)]
+              : resolveShellCandidates(shellResolver, platform, baseEnv);
             const terminalEnv = createTerminalSpawnEnv(baseEnv, session.runtimeEnv);
             const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session);
             ptyProcess = spawnResult.process;
@@ -2177,6 +2233,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         hasRunningSubprocess: false,
         childCommandLabel: null,
         runtimeEnv: normalizedRuntimeEnv(input.env),
+        remote: null,
       };
 
       const createdSession = session;
@@ -2589,6 +2646,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             hasRunningSubprocess: false,
             childCommandLabel: null,
             runtimeEnv: normalizedRuntimeEnv(input.env),
+            remote: null,
           };
           const createdSession = session;
           yield* modifyManagerState((state) => {

@@ -79,7 +79,10 @@ import {
 } from "./composerInlineChip";
 import { FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
 import { ComposerPendingTerminalContextChip } from "./chat/ComposerPendingTerminalContexts";
-import { formatProviderSkillDisplayName } from "~/providerSkillPresentation";
+import {
+  formatProviderSkillDisplayName,
+  formatProviderSkillOrigin,
+} from "~/providerSkillPresentation";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { registerComposerInlineTokenPaste } from "./composerInlineTokenPaste";
 
@@ -215,14 +218,18 @@ function $createComposerMentionNode(path: string): ComposerMentionNode {
 }
 
 function resolveSkillDescription(
-  skill: Pick<ServerProviderSkill, "shortDescription" | "description">,
+  skill: Pick<ServerProviderSkill, "shortDescription" | "description" | "origin">,
 ): string | null {
   const shortDescription = skill.shortDescription?.trim();
-  if (shortDescription) {
-    return shortDescription;
+  const base = shortDescription || skill.description?.trim() || null;
+  const origin = formatProviderSkillOrigin(skill);
+  if (!origin) {
+    return base;
   }
-  const description = skill.description?.trim();
-  return description || null;
+  // A skill layered in from the shared, cross-provider catalog (not native
+  // to the active provider) — call that out in the tooltip rather than the
+  // chip label itself, which stays identical to the provider's own skills.
+  return base ? `${base} (${origin})` : `(${origin})`;
 }
 
 type ComposerSkillMetadata = {
@@ -470,6 +477,7 @@ function skillSignature(skills: ReadonlyArray<ServerProviderSkill>): string {
         skill.path,
         skill.scope ?? "",
         skill.enabled ? "1" : "0",
+        skill.origin ?? "",
       ].join("\u001f"),
     )
     .join("\u001e");

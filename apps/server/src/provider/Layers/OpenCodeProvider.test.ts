@@ -258,13 +258,17 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
 
       const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
 
+      // Shared skills from the host's config dir are layered after these; only
+      // OpenCode's own skills are asserted so the test is machine-independent.
       NodeAssert.deepEqual(
-        snapshot.skills.map((skill) => ({
-          name: skill.name,
-          path: skill.path,
-          enabled: skill.enabled,
-          shortDescription: skill.shortDescription,
-        })),
+        snapshot.skills
+          .filter((skill) => skill.origin !== "shared")
+          .map((skill) => ({
+            name: skill.name,
+            path: skill.path,
+            enabled: skill.enabled,
+            shortDescription: skill.shortDescription,
+          })),
         [
           {
             name: "openclaw-review",

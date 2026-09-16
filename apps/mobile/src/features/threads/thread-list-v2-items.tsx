@@ -313,6 +313,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly snoozed?: boolean;
   /** Pinned-block row: shows the pin glyph and offers Unpin. */
   readonly pinned?: boolean;
+  /** Sub-thread nested under its parent's row: renders indented. */
+  readonly subThread?: boolean;
   /** Preformatted against the parent minute tick so this memoized row's
       countdown keeps moving. */
   readonly snoozeWakeLabelText?: string;
@@ -401,6 +403,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   } = props;
   const snoozedRow = props.snoozed === true;
   const pinnedRow = props.pinned === true;
+  const subThreadRow = props.subThread === true;
 
   const pr = useThreadPr(thread, props.projectCwd ?? props.project?.workspaceRoot ?? null);
   const prState = pr?.state ?? null;
@@ -821,9 +824,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
              separates rows. The opaque screen background stays so swipe
              actions reveal behind the row. */
           <View className="bg-screen">
-            <View className="px-5 py-2.5">{cardContent}</View>
+            <View className={cn("py-2.5 pr-5", subThreadRow ? "pl-10" : "pl-5")}>
+              {cardContent}
+            </View>
             {props.showTrailingDivider !== false ? (
-              <View className="ml-5 h-px bg-border-subtle" />
+              <View className={cn("h-px bg-border-subtle", subThreadRow ? "ml-10" : "ml-5")} />
             ) : null}
           </View>
         )}
@@ -856,7 +861,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         <View
           className={cn(
             "min-h-[44px] flex-row items-center gap-2.5 py-2",
-            sidebarPane ? "px-3" : "px-5",
+            sidebarPane ? "px-3" : subThreadRow ? "pl-10 pr-5" : "px-5",
           )}
         >
           {props.project ? (
@@ -913,7 +918,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         backgroundColor={sidebarPane ? drawerColor : screenColor}
         compactActions={variant === "slim"}
         containerStyle={
-          sidebarPane ? { borderRadius: SIDEBAR_V2_ROW_RADIUS, overflow: "hidden" } : undefined
+          sidebarPane
+            ? {
+                borderRadius: SIDEBAR_V2_ROW_RADIUS,
+                overflow: "hidden",
+                marginLeft: subThreadRow ? 20 : undefined,
+              }
+            : undefined
         }
         enableTrackpadSwipe
         // Full swipe commits the advertised lifecycle action (Settle /

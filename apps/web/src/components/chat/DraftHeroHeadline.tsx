@@ -1,12 +1,12 @@
 import type { ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { FolderPlusIcon } from "lucide-react";
-import { useCallback, useMemo } from "react";
+import { Fragment, useCallback, useMemo } from "react";
 
 import { openCommandPalette } from "~/commandPaletteBus";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useClientSettings } from "~/hooks/useSettings";
-import { selectProjectGroupingSettings } from "~/logicalProject";
+import { groupByContextRoot, selectProjectGroupingSettings } from "~/logicalProject";
 import {
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
@@ -16,6 +16,7 @@ import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { sortLogicalProjectsForSidebar } from "../Sidebar.logic";
 import {
   Menu,
+  MenuGroupLabel,
   MenuItem,
   MenuPopup,
   MenuRadioGroup,
@@ -134,20 +135,23 @@ export function DraftHeroHeadline({
             });
           }}
         >
-          {projectPickerEntries.map(({ group }) => {
-            return (
-              <MenuRadioItem key={group.projectKey} value={group.projectKey} closeOnClick>
-                <Tooltip>
-                  <TooltipTrigger render={<span className="block min-w-0 truncate" />}>
-                    {group.displayName}
-                  </TooltipTrigger>
-                  <TooltipPopup side="top" className="max-w-80">
-                    {group.displayName}
-                  </TooltipPopup>
-                </Tooltip>
-              </MenuRadioItem>
-            );
-          })}
+          {groupByContextRoot(projectPickerEntries, (entry) => entry.group).map((section) => (
+            <Fragment key={section.key ?? "ungrouped"}>
+              {section.label ? <MenuGroupLabel>{section.label}</MenuGroupLabel> : null}
+              {section.items.map(({ group }) => (
+                <MenuRadioItem key={group.projectKey} value={group.projectKey} closeOnClick>
+                  <Tooltip>
+                    <TooltipTrigger render={<span className="block min-w-0 truncate" />}>
+                      {group.displayName}
+                    </TooltipTrigger>
+                    <TooltipPopup side="top" className="max-w-80">
+                      {group.displayName}
+                    </TooltipPopup>
+                  </Tooltip>
+                </MenuRadioItem>
+              ))}
+            </Fragment>
+          ))}
         </MenuRadioGroup>
         <MenuSeparator />
         <MenuItem onClick={openAddProject}>

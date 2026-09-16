@@ -24,6 +24,7 @@ import {
   type DesktopWslState,
   type EnvironmentId,
   type FilesystemBrowseResult,
+  type FilesystemDiscoveredRepository,
   type ProjectId,
   type SourceControlDiscoveryResult,
   type SourceControlProviderKind,
@@ -37,6 +38,7 @@ import {
   CornerLeftUpIcon,
   FileSearchIcon,
   FolderIcon,
+  FolderGit2Icon,
   FolderPlusIcon,
   LinkIcon,
   MessageSquareIcon,
@@ -224,6 +226,14 @@ type AddProjectCloneFlow =
       readonly repository: SourceControlRepositoryInfo | null;
       readonly remoteUrl: string;
     };
+
+interface AddProjectDiscoverFlow {
+  readonly environmentId: EnvironmentId;
+  readonly rootPath: string;
+  readonly repositories: ReadonlyArray<FilesystemDiscoveredRepository>;
+  readonly platform: string;
+  readonly currentProjectCwd: string | null;
+}
 
 const REMOTE_PROJECT_SOURCES: ReadonlyArray<AddProjectRemoteSource> = [
   "url",
@@ -574,6 +584,13 @@ function OpenCommandPaletteDialog(props: {
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
+  const updateProject = useAtomCommand(projectEnvironment.update, {
+    reportFailure: false,
+  });
+  const discoverRepositories = useAtomQueryRunner(filesystemEnvironment.discoverRepositories, {
+    reportFailure: false,
+    reportDefect: false,
+  });
   const lookupRepository = useAtomQueryRunner(sourceControlEnvironment.repository, {
     reportFailure: false,
   });
@@ -642,6 +659,9 @@ function OpenCommandPaletteDialog(props: {
   );
   const [isPickingProjectFolder, setIsPickingProjectFolder] = useState(false);
   const [addProjectCloneFlow, setAddProjectCloneFlow] = useState<AddProjectCloneFlow | null>(null);
+  const [addProjectDiscoverFlow, setAddProjectDiscoverFlow] =
+    useState<AddProjectDiscoverFlow | null>(null);
+  const [isAddingDiscoveredProjects, setIsAddingDiscoveredProjects] = useState(false);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
   const projectGroupingSettings = useMemo(
@@ -1180,6 +1200,12 @@ function OpenCommandPaletteDialog(props: {
 
   function popView(): void {
     browseNavigation.invalidate();
+    if (addProjectDiscoverFlow !== null) {
+      setAddProjectDiscoverFlow(null);
+      setHighlightedItemValue(null);
+      setQuery(addProjectDiscoverFlow.rootPath);
+      return;
+    }
     setAddProjectCloneFlow(null);
     if (viewStack.length <= 1) {
       setAddProjectEnvironmentId(null);
@@ -1190,6 +1216,7 @@ function OpenCommandPaletteDialog(props: {
   }
 
   function handleQueryChange(nextQuery: string): void {
+    if (addProjectDiscoverFlow !== null) return;
     browseNavigation.invalidate();
     setHighlightedItemValue(null);
     setQuery(nextQuery);
@@ -1217,6 +1244,7 @@ function OpenCommandPaletteDialog(props: {
         () => {
           setAddProjectEnvironmentId(environmentId);
           setAddProjectCloneFlow(null);
+          setAddProjectDiscoverFlow(null);
           pushPaletteView(view);
         },
       );
@@ -1233,6 +1261,7 @@ function OpenCommandPaletteDialog(props: {
   const startAddProjectClone = useCallback(
     (environmentId: EnvironmentId, source: AddProjectRemoteSource): void => {
       setAddProjectEnvironmentId(environmentId);
+      setAddProjectDiscoverFlow(null);
       setAddProjectCloneFlow({ step: "repository", environmentId, source });
       pushPaletteView({
         addonIcon: remoteProjectSourceIcon(source, ADDON_ICON_CLASS),
@@ -1359,6 +1388,7 @@ function OpenCommandPaletteDialog(props: {
       }
       setAddProjectEnvironmentId(environmentId);
       setAddProjectCloneFlow(null);
+      setAddProjectDiscoverFlow(null);
       pushPaletteView({
         addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
         groups: buildAddProjectSourceGroups(
@@ -1454,6 +1484,7 @@ function OpenCommandPaletteDialog(props: {
     clearOpenIntent();
     browseNavigation.invalidate();
     setAddProjectCloneFlow(null);
+    setAddProjectDiscoverFlow(null);
     setViewStack([]);
     setQuery("");
     const currentPrefix =
@@ -1679,6 +1710,7 @@ function OpenCommandPaletteDialog(props: {
       readonly rawCwd: string;
       readonly platform: string;
       readonly currentProjectCwd: string | null;
+      readonly skipRepositoryDiscovery?: boolean;
     }) => {
       const environment = environments.find(
         (candidate) => candidate.environmentId === input.environmentId,
@@ -1719,6 +1751,29 @@ function OpenCommandPaletteDialog(props: {
 
       const cwd = resolveProjectPathForDispatch(rawCwd, input.currentProjectCwd);
       if (cwd.length === 0) return;
+
+      if (input.skipRepositoryDiscovery !== true) {
+        const discoveryResult = await discoverRepositories({
+          environmentId: input.environmentId,
+          input: { path: cwd },
+        });
+        if (
+          discoveryResult._tag === "Success" &&
+          !discoveryResult.value.isRepository &&
+          discoveryResult.value.repositories.length > 0
+        ) {
+          setAddProjectDiscoverFlow({
+            environmentId: input.environmentId,
+            rootPath: discoveryResult.value.path,
+            repositories: discoveryResult.value.repositories,
+            platform: input.platform,
+            currentProjectCwd: input.currentProjectCwd,
+          });
+          setHighlightedItemValue(null);
+          setQuery("");
+          return;
+        }
+      }
 
       const existing = findProjectByPath(
         projects.filter((project) => project.environmentId === input.environmentId),
@@ -1808,6 +1863,7 @@ function OpenCommandPaletteDialog(props: {
     [
       handleNewThread,
       createProject,
+      discoverRepositories,
       environments,
       navigate,
       primaryEnvironmentId,
@@ -1816,6 +1872,133 @@ function OpenCommandPaletteDialog(props: {
       setOpen,
       clientSettings.sidebarThreadSortOrder,
       threads,
+    ],
+  );
+
+  const handleAddDiscoveredRepositories = useCallback(
+    async (flow: AddProjectDiscoverFlow) => {
+      if (isAddingDiscoveredProjects) return;
+      setIsAddingDiscoveredProjects(true);
+      try {
+        const environmentProjects = projects.filter(
+          (project) => project.environmentId === flow.environmentId,
+        );
+        const targetEnvironmentProviders =
+          environments.find((environment) => environment.environmentId === flow.environmentId)
+            ?.serverConfig?.providers ??
+          (flow.environmentId === primaryEnvironmentId ? providers : []);
+        const candidates = [
+          { name: inferProjectTitleFromPath(flow.rootPath), path: flow.rootPath },
+          ...flow.repositories.map((repository) => ({
+            name: repository.name,
+            path: repository.path,
+          })),
+        ];
+        let rootProjectId: ProjectId | null = null;
+
+        for (const [index, candidate] of candidates.entries()) {
+          const existing = findProjectByPath(environmentProjects, candidate.path);
+          if (existing) {
+            if (existing.contextRoot !== flow.rootPath) {
+              const updateResult = await updateProject({
+                environmentId: flow.environmentId,
+                input: { projectId: existing.id, contextRoot: flow.rootPath },
+              });
+              if (updateResult._tag === "Failure") {
+                if (!isAtomCommandInterrupted(updateResult)) {
+                  toastManager.add(
+                    stackedThreadToast({
+                      type: "error",
+                      title: `Failed to group ${candidate.name}`,
+                      description: errorMessage(squashAtomCommandFailure(updateResult)),
+                    }),
+                  );
+                }
+                return;
+              }
+            }
+            if (index === 0) rootProjectId = existing.id;
+            continue;
+          }
+
+          const projectId = newProjectId();
+          const createResult = await createProject({
+            environmentId: flow.environmentId,
+            input: {
+              projectId,
+              title: candidate.name,
+              workspaceRoot: candidate.path,
+              contextRoot: flow.rootPath,
+              createWorkspaceRootIfMissing: false,
+              defaultModelSelection: resolveDefaultProviderModelSelection(
+                targetEnvironmentProviders,
+                null,
+              ),
+            },
+          });
+          if (createResult._tag === "Failure") {
+            if (!isAtomCommandInterrupted(createResult)) {
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: `Failed to add ${candidate.name}`,
+                  description: errorMessage(squashAtomCommandFailure(createResult)),
+                }),
+              );
+            }
+            return;
+          }
+          if (index === 0) rootProjectId = projectId;
+        }
+
+        if (rootProjectId === null) return;
+        const latestThread = getLatestThreadForProject(
+          threads.filter((thread) => thread.environmentId === flow.environmentId),
+          rootProjectId,
+          clientSettings.sidebarThreadSortOrder,
+        );
+        if (latestThread) {
+          await navigate({
+            to: "/$environmentId/$threadId",
+            params: buildThreadRouteParams(
+              scopeThreadRef(latestThread.environmentId, latestThread.id),
+            ),
+          });
+        } else {
+          const navigationResult = await settlePromise(() =>
+            handleNewThread(scopeProjectRef(flow.environmentId, rootProjectId)),
+          );
+          if (navigationResult._tag === "Failure") {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Projects added, but the group could not be opened",
+                description: errorMessage(squashAtomCommandFailure(navigationResult)),
+              }),
+            );
+            return;
+          }
+        }
+
+        setAddProjectDiscoverFlow(null);
+        setOpen(false);
+      } finally {
+        setIsAddingDiscoveredProjects(false);
+      }
+    },
+    [
+      clientSettings.sidebarThreadSortOrder,
+      createProject,
+      environments,
+      handleNewThread,
+      isAddingDiscoveredProjects,
+      navigate,
+      primaryEnvironmentId,
+      projects,
+      providers,
+      setOpen,
+      threads,
+      updateProject,
     ],
   );
 
@@ -2066,8 +2249,67 @@ function OpenCommandPaletteDialog(props: {
     };
   }, [addProjectCloneFlow]);
 
+  const repositoryDiscoveryGroups = useMemo<CommandPaletteView["groups"]>(() => {
+    if (addProjectDiscoverFlow === null) return [];
+    const groupLabel = inferProjectTitleFromPath(addProjectDiscoverFlow.rootPath);
+    const repositoryCount = addProjectDiscoverFlow.repositories.length;
+    return [
+      {
+        value: "repository-discovery",
+        label: `Repositories under ${groupLabel}`,
+        items: [
+          {
+            kind: "action",
+            value: "repository-discovery:add-all",
+            searchTerms: ["add", "repositories", groupLabel],
+            title: `Add ${repositoryCount} ${repositoryCount === 1 ? "repository" : "repositories"} under ${groupLabel}`,
+            description: "Create one grouped project per repository, plus the parent folder.",
+            icon: <FolderGit2Icon className={ITEM_ICON_CLASS} />,
+            disabled: isAddingDiscoveredProjects,
+            keepOpen: true,
+            run: async () => {
+              await handleAddDiscoveredRepositories(addProjectDiscoverFlow);
+            },
+          },
+          {
+            kind: "action",
+            value: "repository-discovery:add-folder",
+            searchTerms: ["add", "folder", "single", groupLabel],
+            title: `Add ${groupLabel} as a single project`,
+            description: "Keep the folder as one project without grouping its repositories.",
+            icon: <FolderIcon className={ITEM_ICON_CLASS} />,
+            disabled: isAddingDiscoveredProjects,
+            keepOpen: true,
+            run: async () => {
+              const flow = addProjectDiscoverFlow;
+              setIsAddingDiscoveredProjects(true);
+              try {
+                await handleAddProjectForEnvironment({
+                  environmentId: flow.environmentId,
+                  rawCwd: flow.rootPath,
+                  platform: flow.platform,
+                  currentProjectCwd: flow.currentProjectCwd,
+                  skipRepositoryDiscovery: true,
+                });
+              } finally {
+                setIsAddingDiscoveredProjects(false);
+              }
+            },
+          },
+        ],
+      },
+    ];
+  }, [
+    addProjectDiscoverFlow,
+    handleAddDiscoveredRepositories,
+    handleAddProjectForEnvironment,
+    isAddingDiscoveredProjects,
+  ]);
+
   let displayedGroups: CommandPaletteView["groups"] = filteredGroups;
-  if (addProjectCloneFlow?.step === "repository") {
+  if (addProjectDiscoverFlow !== null) {
+    displayedGroups = repositoryDiscoveryGroups;
+  } else if (addProjectCloneFlow?.step === "repository") {
     displayedGroups = [];
   } else if (addProjectCloneFlow?.step === "confirm") {
     displayedGroups = relativePathNeedsActiveProject ? [] : cloneDestinationBrowseGroups;
@@ -2076,6 +2318,9 @@ function OpenCommandPaletteDialog(props: {
   }
 
   const inputPlaceholder =
+    (addProjectDiscoverFlow
+      ? `Choose how to add ${inferProjectTitleFromPath(addProjectDiscoverFlow.rootPath)}`
+      : null) ??
     remoteProjectInputPlaceholder(addProjectCloneFlow) ??
     getCommandPaletteInputPlaceholder(paletteMode);
   const isSubmenu = paletteMode === "submenu" || paletteMode === "submenu-browse";
@@ -2168,6 +2413,13 @@ function OpenCommandPaletteDialog(props: {
         executeItem(matchingItem);
         return;
       }
+    }
+
+    if (addProjectDiscoverFlow !== null && event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      popView();
+      return;
     }
 
     if (addProjectCloneFlow?.step === "repository" && event.key === "Enter") {
@@ -2431,7 +2683,7 @@ function OpenCommandPaletteDialog(props: {
 
   return (
     <CommandPaletteContent
-      key={`${viewStack.length}-${browseGeneration}-${isBrowsing}-${addProjectCloneFlow?.step ?? "none"}`}
+      key={`${viewStack.length}-${browseGeneration}-${isBrowsing}-${addProjectCloneFlow?.step ?? "none"}-${addProjectDiscoverFlow ? "discover" : "plain"}`}
       aria-label="Command palette"
       autoHighlight={isBrowsing || isRemoteProjectCloneFlow ? false : "always"}
       footerActionLabel={footerActionLabel}

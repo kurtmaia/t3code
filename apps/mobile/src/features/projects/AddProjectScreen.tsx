@@ -58,7 +58,7 @@ import {
   useRemoteEnvironmentRuntime,
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
-import { resolveAddProjectEnvironment } from "./AddProjectScreen.logic";
+import { buildDiscoveryCreatePlan, resolveAddProjectEnvironment } from "./AddProjectScreen.logic";
 
 interface EnvironmentOption {
   readonly environmentId: EnvironmentId;
@@ -88,6 +88,24 @@ function errorMessage(error: unknown): string {
   return error instanceof Error && error.message.trim().length > 0
     ? error.message
     : "An error occurred.";
+}
+
+function confirmRepositoryDiscovery(input: {
+  readonly rootLabel: string;
+  readonly repositoryCount: number;
+}): Promise<"all" | "folder" | "cancel"> {
+  return new Promise((resolve) => {
+    Alert.alert(
+      `Add ${input.repositoryCount} ${input.repositoryCount === 1 ? "repository" : "repositories"} under ${input.rootLabel}?`,
+      "Each repository becomes a project grouped under this folder. The folder itself is also added for shared notes and cross-repository work.",
+      [
+        { text: "Cancel", style: "cancel", onPress: () => resolve("cancel") },
+        { text: "Folder only", onPress: () => resolve("folder") },
+        { text: "Add all", onPress: () => resolve("all") },
+      ],
+      { cancelable: true, onDismiss: () => resolve("cancel") },
+    );
+  });
 }
 
 function stringParam(value: string | string[] | undefined): string | null {
@@ -571,8 +589,9 @@ function useCreateProject(environment: EnvironmentOption | null) {
   const projects = useProjects();
 
   return useCallback(
-    async (workspaceRoot: string) => {
+    async (input: { readonly workspaceRoot: string; readonly contextRoot?: string }) => {
       if (!environment || !canCreateProjectInEnvironment(environment.connectionState)) return;
+      const { workspaceRoot } = input;
 
       const existing = findExistingAddProject({
         projects,
@@ -604,6 +623,7 @@ function useCreateProject(environment: EnvironmentOption | null) {
         commandId: CommandId.make(uuidv4()),
         projectId,
         workspaceRoot,
+        ...(input.contextRoot ? { contextRoot: input.contextRoot } : {}),
         createdAt: new Date().toISOString(),
       });
       const result = await createProject({
@@ -827,6 +847,13 @@ function FolderBrowser(props: {
 export function AddProjectLocalFolderScreen(props: { readonly environmentId?: string | string[] }) {
   const environment = useEnvironmentFromParam(props.environmentId);
   const createProject = useCreateProject(environment);
+  const createGroupedProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
+  const updateGroupedProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
+  const discoverRepositories = useAtomQueryRunner(filesystemEnvironment.discoverRepositories, {
+    reportFailure: false,
+  });
+  const projects = useProjects();
+  const navigation = useNavigation();
   const { isBrowseNavigating, navigateToBrowsePath, pathInput, setPathInput } =
     useBrowsePathInput(environment);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -846,12 +873,111 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
     }
 
     setIsSubmitting(true);
-    const result = await createProject(resolved.path);
+    const discoveryResult = await discoverRepositories({
+      environmentId: environment.environmentId,
+      input: { path: resolved.path },
+    });
+    const discovery = AsyncResult.isSuccess(discoveryResult) ? discoveryResult.value : null;
+    const workspaceRoot = discovery?.path ?? resolved.path;
+
+    if (discovery && !discovery.isRepository && discovery.repositories.length > 0) {
+      const choice = await confirmRepositoryDiscovery({
+        rootLabel: inferProjectTitleFromPath(discovery.path),
+        repositoryCount: discovery.repositories.length,
+      });
+      if (choice === "cancel") {
+        setIsSubmitting(false);
+        return;
+      }
+      if (choice === "all") {
+        const plan = buildDiscoveryCreatePlan({
+          rootPath: discovery.path,
+          repositories: discovery.repositories,
+          existingProjects: projects.filter(
+            (project) => project.environmentId === environment.environmentId,
+          ),
+        });
+        let rootProjectId: ProjectId | null = null;
+        for (const [index, entry] of plan.entries()) {
+          if (entry.existingProjectId !== null) {
+            const updateResult = await updateGroupedProject({
+              environmentId: environment.environmentId,
+              input: {
+                projectId: entry.existingProjectId,
+                contextRoot: entry.contextRoot,
+              },
+            });
+            if (AsyncResult.isFailure(updateResult)) {
+              setError(errorMessage(Cause.squash(updateResult.cause)));
+              setIsSubmitting(false);
+              return;
+            }
+            if (index === 0) rootProjectId = entry.existingProjectId;
+            continue;
+          }
+
+          const projectId = ProjectId.make(uuidv4());
+          const createResult = await createGroupedProject({
+            environmentId: environment.environmentId,
+            input: {
+              ...buildProjectCreateCommand({
+                commandId: CommandId.make(uuidv4()),
+                projectId,
+                workspaceRoot: entry.workspaceRoot,
+                contextRoot: entry.contextRoot,
+                createWorkspaceRootIfMissing: false,
+                createdAt: new Date().toISOString(),
+              }),
+              title: entry.title,
+            },
+          });
+          if (AsyncResult.isFailure(createResult)) {
+            setError(errorMessage(Cause.squash(createResult.cause)));
+            setIsSubmitting(false);
+            return;
+          }
+          if (index === 0) rootProjectId = projectId;
+        }
+
+        if (rootProjectId !== null) {
+          navigation.dispatch(
+            CommonActions.reset({
+              index: 0,
+              routes: [
+                {
+                  name: "NewTaskDraft",
+                  params: {
+                    environmentId: environment.environmentId,
+                    projectId: rootProjectId,
+                    title: plan[0]?.title ?? inferProjectTitleFromPath(discovery.path),
+                  },
+                },
+              ],
+            }),
+          );
+        }
+        setIsSubmitting(false);
+        return;
+      }
+    }
+
+    const result = await createProject({ workspaceRoot });
     if (result && AsyncResult.isFailure(result)) {
       setError(errorMessage(Cause.squash(result.cause)));
     }
     setIsSubmitting(false);
-  }, [createProject, environment, isBrowseNavigating, isSubmitting, pathInput]);
+  }, [
+    createGroupedProject,
+    createProject,
+    discoverRepositories,
+    environment,
+    isBrowseNavigating,
+    isSubmitting,
+    navigation,
+    pathInput,
+    projects,
+    updateGroupedProject,
+  ]);
 
   return (
     <AddProjectShell>
@@ -932,7 +1058,7 @@ export function AddProjectDestinationScreen(props: {
     if (AsyncResult.isFailure(cloneResult)) {
       setError(errorMessage(Cause.squash(cloneResult.cause)));
     } else {
-      const createResult = await createProject(cloneResult.value.cwd);
+      const createResult = await createProject({ workspaceRoot: cloneResult.value.cwd });
       if (createResult && AsyncResult.isFailure(createResult)) {
         setError(errorMessage(Cause.squash(createResult.cause)));
       }

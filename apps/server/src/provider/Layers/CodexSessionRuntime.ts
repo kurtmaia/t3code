@@ -35,10 +35,13 @@ import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
-import { buildCodexInitializeParams } from "./CodexProvider.ts";
+import { buildCodexInitializeParams, parseCodexSkillsListResponse } from "./CodexProvider.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
-import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
+import {
+  buildCodexDeveloperInstructions,
+  type CodexResolvedSkill,
+} from "../CodexDeveloperInstructions.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
 
 const PROVIDER = ProviderDriverKind.make("codex");
@@ -119,6 +122,7 @@ export interface CodexSessionRuntimeSendTurnInput {
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort | undefined;
   readonly interactionMode?: ProviderInteractionMode;
+  readonly resolvedSkills?: ReadonlyArray<CodexResolvedSkill>;
 }
 
 export interface CodexThreadTurnSnapshot {
@@ -341,6 +345,7 @@ function buildCodexCollaborationMode(input: {
   readonly model?: string;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly browserToolsAvailable?: boolean;
+  readonly resolvedSkills?: ReadonlyArray<CodexResolvedSkill>;
 }): EffectCodexSchema.V2TurnStartParams__CollaborationMode | undefined {
   if (input.interactionMode === undefined) {
     return undefined;
@@ -356,6 +361,7 @@ function buildCodexCollaborationMode(input: {
         input.interactionMode,
         { model, reasoningEffort },
         input.browserToolsAvailable ?? true,
+        input.resolvedSkills,
       ),
     },
   };
@@ -375,6 +381,7 @@ export function buildTurnStartParams(input: {
   readonly interactionMode?: ProviderInteractionMode;
   /** Defaults to true so callers that predate the agent-access gate are unchanged. */
   readonly browserToolsAvailable?: boolean;
+  readonly resolvedSkills?: ReadonlyArray<CodexResolvedSkill>;
 }): Effect.Effect<
   CodexTurnStartParamsWithCollaborationMode,
   CodexErrors.CodexAppServerProtocolParseError
@@ -396,6 +403,7 @@ export function buildTurnStartParams(input: {
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
     browserToolsAvailable: input.browserToolsAvailable ?? true,
+    ...(input.resolvedSkills ? { resolvedSkills: input.resolvedSkills } : {}),
   });
 
   return decodeCodexTurnStartParamsWithCollaborationMode({
@@ -908,6 +916,10 @@ export const makeCodexSessionRuntime = (
     const collabChildLiveTurnsRef = yield* Ref.make(new Map<string, string>());
     const suppressMemoryConsolidationNotification = makeMemoryConsolidationNotificationFilter();
     const closedRef = yield* Ref.make(false);
+    // Lazily populated on first use: Codex's own skill names, so a
+    // `resolvedSkills` entry from the shared cross-provider catalog is
+    // never re-injected for a skill this session already has natively.
+    const nativeSkillNamesRef = yield* Ref.make<ReadonlySet<string> | undefined>(undefined);
 
     // `~` is not shell-expanded when env vars are set via
     // `child_process.spawn`; `expandHomePath` lets a configured
@@ -1738,6 +1750,28 @@ export const makeCodexSessionRuntime = (
       Effect.forkIn(runtimeScope),
     );
 
+    const resolveNativeSkillNames = Effect.fn("CodexSessionRuntime.resolveNativeSkillNames")(
+      function* () {
+        const cached = yield* Ref.get(nativeSkillNamesRef);
+        if (cached) {
+          return cached;
+        }
+        const names = yield* client.request("skills/list", { cwds: [options.cwd] }).pipe(
+          Effect.map(
+            (response) =>
+              new Set(
+                parseCodexSkillsListResponse(response, options.cwd).map((skill) => skill.name),
+              ),
+          ),
+          // Best-effort: a failed lookup should never block filtering — treat
+          // Codex as having no native skills rather than failing the turn.
+          Effect.orElseSucceed((): ReadonlySet<string> => new Set()),
+        );
+        yield* Ref.set(nativeSkillNamesRef, names);
+        return names;
+      },
+    );
+
     const start = Effect.fn("CodexSessionRuntime.start")(function* () {
       yield* emitSessionEvent("session/connecting", "Starting Codex App Server session.");
       yield* client.request("initialize", buildCodexInitializeParams());
@@ -1818,6 +1852,13 @@ export const makeCodexSessionRuntime = (
           const normalizedModel = normalizeCodexModelSlug(
             input.model ?? (yield* Ref.get(sessionRef)).model,
           );
+          const resolvedSkills = input.resolvedSkills?.length
+            ? yield* resolveNativeSkillNames().pipe(
+                Effect.map((nativeSkillNames) =>
+                  input.resolvedSkills?.filter((skill) => !nativeSkillNames.has(skill.name)),
+                ),
+              )
+            : undefined;
           const params = yield* buildTurnStartParams({
             threadId: providerThreadId,
             runtimeMode: options.runtimeMode,
@@ -1831,6 +1872,7 @@ export const makeCodexSessionRuntime = (
             // setting, so the prompt describes the tools this turn actually
             // has even if the setting changed after the session started.
             browserToolsAvailable: hasConfiguredMcpServer(options.appServerArgs),
+            ...(resolvedSkills?.length ? { resolvedSkills } : {}),
           });
           const rawResponse = yield* client.raw.request("turn/start", params);
           const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(

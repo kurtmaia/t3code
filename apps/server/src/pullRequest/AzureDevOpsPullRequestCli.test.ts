@@ -1,5 +1,6 @@
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -16,6 +17,10 @@ const layer = it.layer(
         execute: mockedExecute,
       }),
     ),
+    // Nothing ambient: a maintainer who has a real T3CODE_AZURE_DEVOPS_USER exported — anyone
+    // signed in with a PAT — would otherwise have their own name answer the viewer tests, which
+    // are about what az reports.
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
   ),
 );
 
@@ -48,6 +53,29 @@ function pullRequestRows(
 function pullRequests(count: number, firstNumber: number): string {
   return JSON.stringify(pullRequestRows(count, firstNumber));
 }
+
+/** The single pull request `az repos pr show` answers with, rather than a list of one. */
+function pullRequestDetail(number: number): string {
+  const [row] = pullRequestRows(1, number);
+  assert.isDefined(row);
+  return JSON.stringify(row);
+}
+
+/** One thread carrying one remark, which is the whole of what a conversation read returns. */
+function threads(): string {
+  return JSON.stringify({
+    value: [
+      {
+        id: 1,
+        comments: [{ id: 1, content: "Looks good.", publishedDate: "2026-07-02T00:00:00Z" }],
+      },
+    ],
+  });
+}
+
+/** What Azure DevOps answers an unauthenticated read with, on a successful exit. */
+const SIGN_IN_PAGE =
+  '<!DOCTYPE html><html lang="en-US"><head><title>Azure DevOps Services | Sign In</title></head></html>';
 
 /** The arguments of the nth az invocation. */
 function argsOfCall(index: number): ReadonlyArray<string> {
@@ -476,37 +504,90 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("reads the conversation through the REST API, pinned to a version", () =>
+  it.effect("reads the conversation through az devops invoke, pinned to a version", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(
-          output(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
-            JSON.stringify({
-              value: [
-                {
-                  id: 1,
-                  comments: [
-                    { id: 1, content: "Looks good.", publishedDate: "2026-07-02T00:00:00Z" },
-                  ],
-                },
-              ],
-            }),
-          ),
-        ),
-      );
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(threads())));
       const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
 
       const comments = yield* cli.listThreads({
         cwd: "/w",
-        threadsUrl: "https://dev.azure.com/acme/platform/_apis/git/r/web/pullRequests/42/threads",
+        project: "platform",
+        repository: "web",
+        number: 42,
       });
 
       assert.strictEqual(comments.length, 1);
-      expect(argsOfCall(0)).toContain("rest");
-      expect(argsOfCall(0)).toContain(
-        "https://dev.azure.com/acme/platform/_apis/git/r/web/pullRequests/42/threads?api-version=7.1",
+      const args = argsOfCall(0);
+      expect(args).toContain("invoke");
+      // `az rest` reaches the same collection and signs none of it: it attaches a token only for
+      // an endpoint it recognises as Azure's own, and dev.azure.com is not one, so the read
+      // leaves anonymous and comes back as a sign-in page.
+      expect(args).not.toContain("rest");
+      expect(args).toContain("pullRequestThreads");
+      // az defaults `invoke` to api-version 5.0, so the version is stated rather than left.
+      expect(args).toContain("--api-version");
+      expect(args).toContain("7.1");
+      expect(args).toContain("project=platform");
+      expect(args).toContain("repositoryId=web");
+      expect(args).toContain("pullRequestId=42");
+    }),
+  );
+
+  it.effect("fails the conversation read when Azure answers with a sign-in page", () =>
+    Effect.gen(function* () {
+      // What an unauthenticated read gets: HTML, on a successful exit. Reading it as an empty
+      // conversation is what made a signed-out read look like a pull request nobody wrote on.
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(SIGN_IN_PAGE)));
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      const error = yield* Effect.flip(
+        cli.listThreads({ cwd: "/w", project: "platform", repository: "web", number: 42 }),
       );
+
+      assert.strictEqual(error._tag, "AzureDevOpsPullRequestReadError");
+    }),
+  );
+
+  it.effect("routes the conversation by the project and repository Azure named", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output(pullRequestDetail(42))))
+        .mockReturnValueOnce(Effect.succeed(output(threads())));
+      const provider = yield* AzureDevOpsPullRequestProvider.make;
+
+      const activity = yield* provider.getChangeRequestActivity({
+        cwd: "/w",
+        repository: "web",
+        host: "dev.azure.com",
+        number: 42,
+      });
+
+      assert.strictEqual(activity.commentCount, 1);
+      assert.isFalse(activity.commentsTruncated);
+      expect(argsOfCall(1)).toContain("project=platform");
+      expect(argsOfCall(1)).toContain("repositoryId=web");
+    }),
+  );
+
+  it.effect("reports a conversation it could not read, rather than an empty one", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output(pullRequestDetail(42))))
+        .mockReturnValueOnce(Effect.succeed(output(SIGN_IN_PAGE)));
+      const provider = yield* AzureDevOpsPullRequestProvider.make;
+
+      const error = yield* Effect.flip(
+        provider.getChangeRequestActivity({
+          cwd: "/w",
+          repository: "web",
+          host: "dev.azure.com",
+          number: 42,
+        }),
+      );
+
+      // The timeline says the comments are unavailable and offers a retry. Answering with none
+      // would have it state, in the same place and with the same confidence, that there are none.
+      assert.strictEqual(error.operation, "getChangeRequestActivity");
     }),
   );
 
@@ -610,4 +691,49 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       assert.strictEqual(mockedExecute.mock.calls.length, 0);
     }),
   );
+  it.effect("reports the viewer as unavailable when only a PAT is signed in", () =>
+    Effect.gen(function* () {
+      // `az devops login` leaves no `az account show` identity at all, so the command exits
+      // non-zero. That is an unnamed viewer, not a broken CLI, and a listing still reads.
+      mockedExecute.mockReturnValueOnce(
+        Effect.fail(
+          new AzureDevOpsCli.AzureDevOpsCommandFailedError({
+            operation: "execute",
+            command: "az",
+            cwd: "/w",
+            argumentCount: 7,
+            cause: "Please run 'az login' to setup account.",
+          }),
+        ),
+      );
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      const error = yield* Effect.flip(cli.getViewer({ cwd: "/w" }));
+
+      assert.strictEqual(error._tag, "AzureDevOpsViewerUnavailableError");
+    }),
+  );
 });
+
+it.effect("uses the configured viewer instead of asking the CLI who is signed in", () =>
+  Effect.gen(function* () {
+    const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+    const viewer = yield* cli.getViewer({ cwd: "/w" });
+
+    assert.strictEqual(viewer, "bilal@acme.dev");
+    // The whole point of configuring one: a PAT sign-in has nobody to ask.
+    assert.strictEqual(mockedExecute.mock.calls.length, 0);
+  }).pipe(
+    Effect.provide(
+      AzureDevOpsPullRequestCli.layer.pipe(
+        Layer.provide(Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({ execute: mockedExecute })),
+        Layer.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({ env: { T3CODE_AZURE_DEVOPS_USER: "bilal@acme.dev" } }),
+          ),
+        ),
+      ),
+    ),
+  ),
+);

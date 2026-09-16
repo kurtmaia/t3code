@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
@@ -132,3 +133,73 @@ it.effect("uses Azure CLI repository detection for default branch lookup", () =>
     assert.strictEqual(cwdInput, "/repo");
   }),
 );
+
+it("reports a PAT-authenticated server as authenticated", () => {
+  // `az devops login` leaves no `az account show` identity, so the probe has to read the
+  // outcome of a real Azure DevOps call rather than an Entra sign-in.
+  const auth = AzureDevOpsSourceControlProvider.discovery.parseAuth({
+    stdout: "ds-pricing-engine\n",
+    stderr: "",
+    exitCode: ChildProcessSpawner.ExitCode(0),
+  });
+
+  assert.strictEqual(auth.status, "authenticated");
+  assert.deepStrictEqual(auth.host, Option.some("dev.azure.com"));
+});
+
+it("stays authenticated when the signed-in organization has no projects", () => {
+  const auth = AzureDevOpsSourceControlProvider.discovery.parseAuth({
+    stdout: "",
+    stderr: "",
+    exitCode: ChildProcessSpawner.ExitCode(0),
+  });
+
+  assert.strictEqual(auth.status, "authenticated");
+});
+
+it("reports unknown rather than unauthenticated when no organization is configured", () => {
+  const auth = AzureDevOpsSourceControlProvider.discovery.parseAuth({
+    stdout: "",
+    stderr:
+      "ERROR: --organization must be specified. The value should be the URI of your Azure DevOps organization, for example: https://dev.azure.com/MyOrganization/.",
+    exitCode: ChildProcessSpawner.ExitCode(1),
+  });
+
+  assert.strictEqual(auth.status, "unknown");
+  assert.include(
+    Option.getOrElse(auth.detail, () => ""),
+    "az devops configure --defaults",
+  );
+});
+
+it("surfaces the CLI's own dual-credential hint when the call is rejected", () => {
+  const auth = AzureDevOpsSourceControlProvider.discovery.parseAuth({
+    stdout: "",
+    stderr:
+      "ERROR: Before you can run Azure DevOps commands, you need to run the login command (az login if using AAD/MSA identity else az devops login if using PAT token) to setup credentials.",
+    exitCode: ChildProcessSpawner.ExitCode(1),
+  });
+
+  assert.strictEqual(auth.status, "unauthenticated");
+  assert.include(
+    Option.getOrElse(auth.detail, () => ""),
+    "az devops login",
+  );
+});
+
+it("probes Azure DevOps itself rather than the Entra sign-in", () => {
+  // Regression guard: `az account show` only sees `az login`, so it reported every
+  // PAT-authenticated server as signed out.
+  assert.deepStrictEqual(AzureDevOpsSourceControlProvider.discovery.authArgs, [
+    "devops",
+    "project",
+    "list",
+    "--detect",
+    "false",
+    "--query",
+    "value[0].name",
+    "-o",
+    "tsv",
+    "--only-show-errors",
+  ]);
+});

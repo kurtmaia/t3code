@@ -56,6 +56,10 @@ export const ThreadId = makeEntityId("ThreadId");
 export type ThreadId = typeof ThreadId.Type;
 export const ProjectId = makeEntityId("ProjectId");
 export type ProjectId = typeof ProjectId.Type;
+/** A durable, human-managed unit of work on a project's board. Distinct from
+    `RuntimeTaskId`, which identifies an ephemeral provider-runtime task. */
+export const TaskId = makeEntityId("TaskId");
+export type TaskId = typeof TaskId.Type;
 export const EnvironmentId = makeEntityId("EnvironmentId");
 export type EnvironmentId = typeof EnvironmentId.Type;
 export const CommandId = makeEntityId("CommandId");

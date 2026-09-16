@@ -226,4 +226,20 @@ describe("add project shared logic", () => {
       defaultModelSelection: null,
     });
   });
+
+  it("carries context-root grouping options into project.create", () => {
+    expect(
+      buildProjectCreateCommand({
+        commandId: CommandId.make("command"),
+        projectId: ProjectId.make("project"),
+        workspaceRoot: "/work/freight/model",
+        contextRoot: "/work/freight",
+        createWorkspaceRootIfMissing: false,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    ).toMatchObject({
+      contextRoot: "/work/freight",
+      createWorkspaceRootIfMissing: false,
+    });
+  });
 });

@@ -41,6 +41,9 @@ T3 Code looks for Claude skills in the Claude config directory's `skills` folder
 
 If the same skill name exists in more than one folder, the later folder wins.
 
+These are also the folders every other provider reads from. See
+[Use a skill with any provider](skills.md).
+
 ## I Want Work And Personal Claude Accounts
 
 Use a different Claude config directory for each account.
