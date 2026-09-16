@@ -240,9 +240,10 @@ function itemSummary({
         </span>
       );
     }
+    const authDetail = optionLabel(auth.detail);
     return (
       <span>
-        Could not verify {item.label}. {optionLabel(auth.detail) ?? item.installHint}
+        Could not verify {item.label}. {authDetail ?? item.installHint}
       </span>
     );
   }

@@ -179,9 +179,9 @@ export const discoverSharedSkills = Effect.fn("discoverSharedSkills")(function* 
  * `discoverSharedSkills`, tagged `origin: "shared"` and filtered against a
  * provider's own natively-discovered skill names so a provider never lists
  * (or gets asked to inject) a skill it already has. Providers with no
- * native skill mechanism of their own (Cursor, Grok, OpenCode) pass an
- * empty `nativeSkillNames` set; Codex passes the names from its own
- * `skills/list` RPC result.
+ * native skill mechanism of their own (Cursor, Grok, Copilot) pass an
+ * empty `nativeSkillNames` set; Codex and OpenCode pass the names of the
+ * skills they discovered themselves.
  */
 export const discoverSharedSkillsForProvider = Effect.fn("discoverSharedSkillsForProvider")(
   function* (
