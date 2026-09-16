@@ -4,7 +4,7 @@
  *
  * Deliberately lighter than ChatView's composer: a sub-thread is a focused
  * Q&A next to the text it is about. It inherits the parent's worktree and
- * model, starts in plan mode (switchable), and anything heavier — approvals,
+ * model and interaction mode (switchable), and anything heavier — approvals,
  * attachments, model changes — belongs in "Open as full thread".
  *
  * While the surface is a draft (`subThreadId === null`) nothing exists on the
@@ -96,7 +96,7 @@ export function SubThreadPanel(props: SubThreadPanelProps) {
   }, [messages.length, lastMessage?.text]);
 
   const turnRunning = subThread?.session?.activeTurnId != null || lastMessage?.streaming === true;
-  const interactionMode = subThread?.interactionMode ?? "plan";
+  const interactionMode = subThread?.interactionMode ?? parentShell.interactionMode;
 
   const reportSendFailure = useCallback((failure: AtomCommandFailure) => {
     if (isAtomCommandInterrupted(failure)) return;
@@ -161,6 +161,7 @@ export function SubThreadPanel(props: SubThreadPanelProps) {
       promptText: buildSubThreadSeedPrompt({ quoteText: quote.text, question }),
       modelSelection: parentShell.modelSelection,
       runtimeMode: parentShell.runtimeMode,
+      interactionMode: parentShell.interactionMode,
       createdAt: new Date().toISOString(),
     });
 
@@ -287,8 +288,8 @@ export function SubThreadPanel(props: SubThreadPanelProps) {
         >
           {surface.subThreadId === null ? (
             <p className="py-6 text-center text-xs text-muted-foreground">
-              Ask about the highlighted passage. The side conversation starts in plan mode and
-              shares this thread&apos;s workspace.
+              Ask about the highlighted passage. The side conversation uses this thread&apos;s mode
+              and workspace.
             </p>
           ) : (
             <div className="flex flex-col gap-3">

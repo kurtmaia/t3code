@@ -15,9 +15,10 @@ quoted, and your question starts the side conversation from there.
 ## What a side conversation is
 
 It is a real thread, linked to the passage it was opened from. It shares the parent thread's
-workspace, so the agent can read the same code your question is about, and it starts in **plan
-mode** — it answers questions but does not edit files. The mode toggle in the panel lets a side
-conversation escalate into making an edit; remember it works in the same workspace as its parent.
+workspace, so the agent can read the same code your question is about, and it starts in the
+parent thread's mode: plan mode if the parent is planning, otherwise the normal mode. The mode
+toggle in the panel switches between them; in the normal mode the agent may edit files, and it
+works in the same workspace as its parent.
 
 The quoted passage stays highlighted in the parent thread, with a chip under the message for each
 side conversation opened from it. Click either to reopen the panel. Deleting a side conversation
