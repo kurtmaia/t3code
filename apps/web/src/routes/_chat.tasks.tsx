@@ -33,6 +33,7 @@ import { Textarea } from "~/components/ui/textarea";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { newTaskId, newThreadId } from "~/lib/utils";
+import { nestSubThreadsInSidebarList } from "~/components/Sidebar.logic";
 import { useProjects, useTasks, useThreadShells } from "~/state/entities";
 import { taskEnvironment } from "~/state/taskCommands";
 import { threadEnvironment } from "~/state/threads";
@@ -705,7 +706,11 @@ function TasksPage() {
     });
   }, []);
 
-  const selectedThreads = selectedTask ? (threadsByTask.get(selectedTask.id) ?? []) : [];
+  // Sub-threads inherit their parent's task, so they land in the same task
+  // group; ordering keeps each one right after the thread it was opened from.
+  const selectedThreads = selectedTask
+    ? nestSubThreadsInSidebarList(threadsByTask.get(selectedTask.id) ?? []).ordered
+    : [];
   const attachableThreads = selectedTask
     ? threads.filter(
         (thread) =>

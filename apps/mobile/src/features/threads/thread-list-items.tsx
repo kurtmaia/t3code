@@ -436,6 +436,8 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly searchMatch?: EnvironmentThreadSearchMatch;
   readonly searchQuery?: string;
   readonly isLast: boolean;
+  /** Sub-thread nested under its parent's row: renders indented. */
+  readonly isSubThread?: boolean;
   /** Sidebar only: the thread currently open in the detail pane. */
   readonly selected?: boolean;
   /** Defaults to window width minus compact margins. */
@@ -455,6 +457,9 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const { themeAppearance: colorScheme } = useAppearancePreferences();
   const compact = props.variant === "compact";
   const selected = props.selected === true;
+  // Sub-threads read as children of the row above: indented, with the same
+  // interactions as any other thread row.
+  const subThreadInset = props.isSubThread === true ? 20 : 0;
   // Recycling-safe: resets when the list container is reused for another
   // thread, so a hover highlight can't leak across rows.
   const [hovered, setHovered] = useRecyclingState(false);
@@ -590,7 +595,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
       >
         <View
           style={{
-            paddingLeft: THREAD_LIST_COMPACT_INSET,
+            paddingLeft: THREAD_LIST_COMPACT_INSET + subThreadInset,
             paddingRight: 18,
             paddingTop: 10,
           }}
@@ -695,7 +700,13 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     <ThreadSwipeable
       backgroundColor={backgroundColor}
       containerStyle={
-        compact ? undefined : { borderRadius: SIDEBAR_ROW_RADIUS, overflow: "hidden" }
+        compact
+          ? undefined
+          : {
+              borderRadius: SIDEBAR_ROW_RADIUS,
+              overflow: "hidden",
+              marginLeft: subThreadInset === 0 ? undefined : subThreadInset,
+            }
       }
       enableTrackpadSwipe
       fullSwipeWidth={props.fullSwipeWidth ?? windowWidth - 32}

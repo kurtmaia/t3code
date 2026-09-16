@@ -605,6 +605,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             onEndFollowEnabledChange={setEndFollowEnabled}
             skills={selectedProviderSkills}
             loadEarlier={props.loadEarlier ?? null}
+            sourceQuote={props.selectedThread.sourceQuote ?? null}
+            parentThreadId={props.selectedThread.parentThreadId ?? null}
           />
         </View>
       ) : (

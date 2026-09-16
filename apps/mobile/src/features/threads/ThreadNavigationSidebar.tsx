@@ -855,6 +855,7 @@ function ThreadNavigationSidebarPane(
           previous.item.variant === item.item.variant &&
           previous.item.snoozed === item.item.snoozed &&
           previous.item.pinned === item.item.pinned &&
+          previous.item.subThread === item.item.subThread &&
           previous.snoozeWakeLabelText === item.snoozeWakeLabelText
         );
       }
@@ -943,6 +944,7 @@ function ThreadNavigationSidebarPane(
               variant={item.item.variant}
               snoozed={item.item.snoozed}
               pinned={item.item.pinned}
+              subThread={item.item.subThread}
               snoozePresetMinute={nowMinute}
               snoozeWakeLabelText={item.snoozeWakeLabelText}
               project={projectByKey.get(scopeKey) ?? null}
@@ -1083,6 +1085,7 @@ function ThreadNavigationSidebarPane(
                 null
               }
               isLast={item.isLast}
+              isSubThread={item.isSubThread}
               searchMatch={threadSearchMatchByKey.get(
                 threadSearchMatchKey({
                   environmentId: thread.environmentId,

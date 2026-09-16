@@ -22,6 +22,7 @@ export const RIGHT_PANEL_KINDS = [
   "terminal",
   "pull-request",
   "agents",
+  "sub-thread",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -62,13 +63,27 @@ export type RightPanelSurface =
       repository: string;
       number: number;
     }
-  | { id: "agents"; kind: "agents" };
+  | { id: "agents"; kind: "agents" }
+  | {
+      /**
+       * A sub-thread: a side conversation anchored to a quoted passage of this
+       * thread's transcript. While `subThreadId` is null the surface is a
+       * draft — the thread is only created on first send, so closing the tab
+       * costs nothing and drafts are dropped on rehydrate.
+       */
+      id: `sub-thread:${string}`;
+      kind: "sub-thread";
+      subThreadId: string | null;
+      parentMessageId: string;
+      quoteText: string;
+    };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
 // v10 keys pull-request surfaces by reference instead of a singleton tab.
 // v11 stops persisting the pull-request list's shared panel, so a restart opens the page fresh.
-const RIGHT_PANEL_STORAGE_VERSION = 11;
+// v12 adds sub-thread surfaces; drafts (no thread yet) do not survive a restart.
+const RIGHT_PANEL_STORAGE_VERSION = 12;
 
 /**
  * The pull-request list's shared panel (see PULL_REQUESTS_PANEL_ID in the route) is session
@@ -86,7 +101,7 @@ interface RightPanelStoreState {
   byThreadKey: Record<string, ThreadRightPanelState>;
   open: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "sub-thread">,
   ) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
@@ -95,6 +110,22 @@ interface RightPanelStoreState {
     target: { environmentId?: string; projectId: string; repository: string; number: number },
   ) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
+  /** Open (or refresh the quote of) the draft tab for a quoted message. */
+  openSubThreadDraft: (
+    ref: ScopedThreadRef,
+    input: { parentMessageId: string; quoteText: string },
+  ) => void;
+  /** Open an existing sub-thread's tab, e.g. from an anchor in the transcript. */
+  openSubThread: (
+    ref: ScopedThreadRef,
+    input: { subThreadId: string; parentMessageId: string; quoteText: string },
+  ) => void;
+  /** Swap a draft tab for the thread-backed one in place once the first send lands. */
+  promoteSubThreadDraft: (
+    ref: ScopedThreadRef,
+    draftSurfaceId: string,
+    subThreadId: string,
+  ) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
     surfaceId: string,
@@ -115,7 +146,7 @@ interface RightPanelStoreState {
   toggleVisibility: (ref: ScopedThreadRef) => void;
   toggle: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "sub-thread">,
   ) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
@@ -127,7 +158,7 @@ const EMPTY_THREAD_STATE: ThreadRightPanelState = {
 };
 
 const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request">,
+  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request" | "sub-thread">,
 ): RightPanelSurface => {
   switch (kind) {
     case "diff":
@@ -162,6 +193,40 @@ const terminalSurface = (terminalId: string): RightPanelSurface => ({
   resourceId: terminalId,
   terminalIds: [terminalId],
   activeTerminalId: terminalId,
+});
+
+export type SubThreadSurface = Extract<RightPanelSurface, { kind: "sub-thread" }>;
+
+/** One draft per quoted message: re-quoting the same message replaces it. */
+export function subThreadDraftSurfaceId(parentMessageId: string): SubThreadSurface["id"] {
+  return `sub-thread:draft:${parentMessageId}`;
+}
+
+export function subThreadSurfaceId(subThreadId: string): SubThreadSurface["id"] {
+  return `sub-thread:${subThreadId}`;
+}
+
+const subThreadDraftSurface = (input: {
+  parentMessageId: string;
+  quoteText: string;
+}): SubThreadSurface => ({
+  id: subThreadDraftSurfaceId(input.parentMessageId),
+  kind: "sub-thread",
+  subThreadId: null,
+  parentMessageId: input.parentMessageId,
+  quoteText: input.quoteText,
+});
+
+const subThreadSurface = (input: {
+  subThreadId: string;
+  parentMessageId: string;
+  quoteText: string;
+}): SubThreadSurface => ({
+  id: subThreadSurfaceId(input.subThreadId),
+  kind: "sub-thread",
+  subThreadId: input.subThreadId,
+  parentMessageId: input.parentMessageId,
+  quoteText: input.quoteText,
 });
 
 export type PullRequestSurface = Extract<RightPanelSurface, { kind: "pull-request" }>;
@@ -266,6 +331,18 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                     // Dropped surface kind: plans now render inline in the
                     // transcript (v9).
                     if ((surface as { kind?: string }).kind === "plan") return [];
+                    if (surface.kind === "sub-thread") {
+                      // Drafts have no thread yet; the quote context behind
+                      // them is session state, so a restart drops them (v12).
+                      if (
+                        typeof surface.subThreadId !== "string" ||
+                        typeof surface.parentMessageId !== "string" ||
+                        typeof surface.quoteText !== "string"
+                      ) {
+                        return [];
+                      }
+                      return [surface];
+                    }
                     if (surface.kind === "file") {
                       const revealLine =
                         typeof surface.revealLine === "number" &&
@@ -422,6 +499,50 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) =>
             upsertSurface(current, terminalSurface(terminalId)),
           ),
+        })),
+      openSubThreadDraft: (ref, input) =>
+        set((state) => ({
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+            const surface = subThreadDraftSurface(input);
+            // A fresh quote on the same message replaces the stale draft
+            // rather than reviving it.
+            return upsertSurface(
+              {
+                ...current,
+                surfaces: current.surfaces.filter((entry) => entry.id !== surface.id),
+              },
+              surface,
+            );
+          }),
+        })),
+      openSubThread: (ref, input) =>
+        set((state) => ({
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) =>
+            upsertSurface(current, subThreadSurface(input)),
+          ),
+        })),
+      promoteSubThreadDraft: (ref, draftSurfaceId, subThreadId) =>
+        set((state) => ({
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+            const draft = current.surfaces.find(
+              (entry): entry is SubThreadSurface =>
+                entry.id === draftSurfaceId && entry.kind === "sub-thread",
+            );
+            if (!draft) return current;
+            const promoted = subThreadSurface({
+              subThreadId,
+              parentMessageId: draft.parentMessageId,
+              quoteText: draft.quoteText,
+            });
+            return {
+              ...current,
+              surfaces: current.surfaces.map((entry) =>
+                entry.id === draftSurfaceId ? promoted : entry,
+              ),
+              activeSurfaceId:
+                current.activeSurfaceId === draftSurfaceId ? promoted.id : current.activeSurfaceId,
+            };
+          }),
         })),
       splitTerminal: (ref, surfaceId, terminalId, direction = "horizontal") =>
         set((state) => ({

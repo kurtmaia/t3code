@@ -5,6 +5,7 @@ import type {
   OrchestrationTask,
   OrchestrationThread,
   ProjectId,
+  ProjectRemoteBinding,
   TaskId,
   TaskStatus,
   ThreadId,
@@ -14,6 +15,16 @@ import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as Effect from "effect/Effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
+
+// Hostnames and ssh aliases are case-insensitive; remote paths are not.
+function normalizeRemoteHostForComparison(host: string): string {
+  return host.trim().toLowerCase();
+}
+
+function normalizeRemotePathForComparison(remotePath: string): string {
+  const trimmed = remotePath.trim();
+  return trimmed.length > 1 ? trimmed.replace(/\/+$/u, "") : trimmed;
+}
 
 function invariantError(commandType: string, detail: string): OrchestrationCommandInvariantError {
   return new OrchestrationCommandInvariantError({
@@ -96,6 +107,43 @@ export function requireActiveProjectWorkspaceRootAbsent(input: {
     invariantError(
       input.command.type,
       `Active project '${existingProject.id}' already exists for workspace root '${normalizedWorkspaceRoot}'.`,
+    ),
+  );
+}
+
+/**
+ * Two projects must not point at the same directory on the same remote host: the remote
+ * directory is a single mutable resource with no locking, so a second binding would let two
+ * threads race each other's builds.
+ *
+ * Hosts are compared as written rather than resolved through `ssh -G`, because deciding stays
+ * pure and resolution needs a subprocess. Two different aliases for one machine therefore slip
+ * through; that is a conservative miss, not a correctness hole, and the remote path is compared
+ * case-sensitively because remote filesystems are POSIX.
+ */
+export function requireActiveProjectRemoteBindingAbsent(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly remote: ProjectRemoteBinding;
+  readonly exceptProjectId?: ProjectId;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  const host = normalizeRemoteHostForComparison(input.remote.host);
+  const remotePath = normalizeRemotePathForComparison(input.remote.remotePath);
+  const existingProject = input.readModel.projects.find(
+    (project) =>
+      project.deletedAt === null &&
+      project.id !== input.exceptProjectId &&
+      project.remote != null &&
+      normalizeRemoteHostForComparison(project.remote.host) === host &&
+      normalizeRemotePathForComparison(project.remote.remotePath) === remotePath,
+  );
+  if (existingProject === undefined) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Active project '${existingProject.id}' is already bound to '${remotePath}' on '${host}'.`,
     ),
   );
 }

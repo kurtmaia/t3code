@@ -952,3 +952,52 @@ export function sortScopedProjectsForSidebar<
       left.id.localeCompare(right.id),
   );
 }
+
+/**
+ * Re-orders one sidebar shelf so sub-threads sit under their parent: each
+ * child moves to immediately after its parent, keeping the children's own
+ * relative order, and its scoped key lands in `nestedKeys` so the row can
+ * indent. A child whose parent is not in this list (deleted, archived, on
+ * another shelf, filtered out) stays exactly where the shelf sort put it —
+ * promoted, never unreachable. Nesting is one level deep by contract.
+ */
+export function nestSubThreadsInSidebarList<
+  TThread extends {
+    readonly id: string;
+    readonly environmentId: string;
+    readonly parentThreadId?: string | null | undefined;
+  },
+>(threads: readonly TThread[]): { ordered: TThread[]; nestedKeys: ReadonlySet<string> } {
+  const scopedKey = (environmentId: string, threadId: string) => `${environmentId}:${threadId}`;
+  const present = new Set(threads.map((thread) => scopedKey(thread.environmentId, thread.id)));
+  const childrenByParentKey = new Map<string, TThread[]>();
+  const topLevel: TThread[] = [];
+  const nestedKeys = new Set<string>();
+
+  for (const thread of threads) {
+    const parentThreadId = thread.parentThreadId ?? null;
+    const parentKey =
+      parentThreadId === null ? null : scopedKey(thread.environmentId, parentThreadId);
+    if (parentKey === null || !present.has(parentKey)) {
+      topLevel.push(thread);
+      continue;
+    }
+    const children = childrenByParentKey.get(parentKey) ?? [];
+    children.push(thread);
+    childrenByParentKey.set(parentKey, children);
+    nestedKeys.add(scopedKey(thread.environmentId, thread.id));
+  }
+  if (nestedKeys.size === 0) {
+    return { ordered: [...threads], nestedKeys };
+  }
+
+  const ordered: TThread[] = [];
+  for (const thread of topLevel) {
+    ordered.push(thread);
+    const children = childrenByParentKey.get(scopedKey(thread.environmentId, thread.id));
+    if (children) {
+      ordered.push(...children);
+    }
+  }
+  return { ordered, nestedKeys };
+}

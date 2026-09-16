@@ -242,6 +242,50 @@ export type ProjectFaviconPath = typeof ProjectFaviconPath.Type;
 export const ProjectContextRoot = TrimmedNonEmptyString.check(Schema.isMaxLength(1024));
 export type ProjectContextRoot = typeof ProjectContextRoot.Type;
 
+/**
+ * How the remote host's login shell parses a command line. Non-POSIX shells mangle the
+ * quoting we generate, so they are wrapped in `sh -c` rather than trusted directly.
+ */
+export const RemoteShellDialect = Schema.Literals(["posix", "fish", "csh", "unknown"]);
+export type RemoteShellDialect = typeof RemoteShellDialect.Type;
+
+/**
+ * What a remote host was found to support when the binding was created. Probed once at
+ * bind time rather than per operation, and re-probed when a sync fails in a way that
+ * suggests the host changed.
+ */
+export const RemoteHostCapabilities = Schema.Struct({
+  // `rsync --version` output on the remote, or null when rsync is missing entirely.
+  rsyncVersion: Schema.NullOr(TrimmedNonEmptyString),
+  shellDialect: RemoteShellDialect,
+  // Which login shell wraps remote commands. `sh -lc` reads /etc/profile and ~/.profile
+  // only, so hosts that keep nvm/pyenv/mise in ~/.bashrc need bash to see their toolchain.
+  loginShell: Schema.Literals(["bash", "sh"]),
+  // `find -newer` scopes the down-sync to what a command actually touched. Without it
+  // the mirror falls back to comparing the whole tree.
+  supportsFindNewer: Schema.Boolean,
+  probedAt: IsoDateTime,
+});
+export type RemoteHostCapabilities = typeof RemoteHostCapabilities.Type;
+
+/**
+ * Binds a project to a directory on another machine reached over ssh.
+ *
+ * The project's `workspaceRoot` stays local and keeps meaning "a real directory on this
+ * server's disk" - for a bound project that directory is the mirror. This record says
+ * where the source actually lives and which host runs its builds. Absent or null means an
+ * ordinary local project, which is every project that existed before this field.
+ */
+export const ProjectRemoteBinding = Schema.Struct({
+  // An ssh destination: a config alias, or user@host. Resolved through `ssh -G`.
+  host: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  // Absolute path on the remote host. Never normalized against local disk, and never
+  // tilde-expanded locally - the remote HOME is not ours.
+  remotePath: TrimmedNonEmptyString.check(Schema.isMaxLength(1024)),
+  capabilities: Schema.optional(Schema.NullOr(RemoteHostCapabilities)),
+});
+export type ProjectRemoteBinding = typeof ProjectRemoteBinding.Type;
+
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
@@ -254,6 +298,7 @@ export const OrchestrationProject = Schema.Struct({
   // Optional on the wire so cached snapshots from older servers still decode.
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   contextRoot: Schema.optional(Schema.NullOr(ProjectContextRoot)),
+  remote: Schema.optional(Schema.NullOr(ProjectRemoteBinding)),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -296,6 +341,28 @@ const SourceProposedPlanReference = Schema.Struct({
   threadId: ThreadId,
   planId: OrchestrationProposedPlanId,
 });
+
+/** Cap on the quoted passage a sub-thread carries. The quote rides the shell
+    snapshot (so parent transcripts can render anchors from data every client
+    already holds), which is why the bound lives in the schema and not in
+    client goodwill. */
+export const THREAD_SOURCE_QUOTE_MAX_LENGTH = 500;
+
+/**
+ * The passage of a parent-thread message a sub-thread was opened about.
+ * `messageId` is client-supplied provenance — the decider does not track
+ * message ids, so clients must tolerate a message that no longer exists and
+ * fall back to a message-level affordance. `range` is a best-effort hint into
+ * the selection source; anchor matching is text-based, never range-based.
+ */
+export const ThreadSourceQuote = Schema.Struct({
+  messageId: MessageId,
+  text: TrimmedNonEmptyString.check(Schema.isMaxLength(THREAD_SOURCE_QUOTE_MAX_LENGTH)),
+  range: Schema.optional(
+    Schema.NullOr(Schema.Struct({ start: NonNegativeInt, end: NonNegativeInt })),
+  ),
+});
+export type ThreadSourceQuote = typeof ThreadSourceQuote.Type;
 
 export const OrchestrationSessionStatus = Schema.Literals([
   "idle",
@@ -403,6 +470,16 @@ export const OrchestrationThread = Schema.Struct({
       than everything in the repository. Optional on the wire so payloads from
       pre-task servers still decode. */
   taskId: Schema.optional(Schema.NullOr(TaskId)),
+  /** Parent thread when this is a sub-thread — a side conversation opened from
+      a quoted passage of the parent's transcript. One level deep only. Not
+      cleared when the parent is deleted: clients promote orphans to the top
+      level. Optional on the wire so payloads from pre-sub-thread servers
+      still decode. */
+  parentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  /** The quoted passage this sub-thread was opened about. Write-once at
+      creation. Optional on the wire so payloads from pre-sub-thread servers
+      still decode. */
+  sourceQuote: Schema.optional(Schema.NullOr(ThreadSourceQuote)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -543,6 +620,7 @@ export const OrchestrationProjectShell = Schema.Struct({
   // Optional on the wire so cached snapshots from older servers still decode.
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   contextRoot: Schema.optional(Schema.NullOr(ProjectContextRoot)),
+  remote: Schema.optional(Schema.NullOr(ProjectRemoteBinding)),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -565,6 +643,14 @@ export const OrchestrationThreadShell = Schema.Struct({
       than everything in the repository. Optional on the wire so payloads from
       pre-task servers still decode. */
   taskId: Schema.optional(Schema.NullOr(TaskId)),
+  /** Parent thread when this is a sub-thread. Rides the shell (with
+      sourceQuote) deliberately: parent transcripts render quote anchors from
+      the shell stream every client already maintains, with no extra
+      subscriptions. Both are write-once at creation, so memos keyed on them
+      never churn. Optional on the wire so payloads from pre-sub-thread
+      servers still decode. */
+  parentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  sourceQuote: Schema.optional(Schema.NullOr(ThreadSourceQuote)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -765,6 +851,7 @@ export const ProjectCreateCommand = Schema.Struct({
   createWorkspaceRootIfMissing: Schema.optional(Schema.Boolean),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   contextRoot: Schema.optional(Schema.NullOr(ProjectContextRoot)),
+  remote: Schema.optional(Schema.NullOr(ProjectRemoteBinding)),
   createdAt: IsoDateTime,
 });
 
@@ -779,6 +866,7 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   contextRoot: Schema.optional(Schema.NullOr(ProjectContextRoot)),
+  remote: Schema.optional(Schema.NullOr(ProjectRemoteBinding)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
 });
 
@@ -795,6 +883,10 @@ const ThreadCreateCommand = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
   taskId: Schema.optional(Schema.NullOr(TaskId)),
+  /** Present when creating a sub-thread. The decider requires the parent to
+      exist, live in the same project, and not itself be a sub-thread. */
+  parentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  sourceQuote: Schema.optional(Schema.NullOr(ThreadSourceQuote)),
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
@@ -1316,6 +1408,7 @@ export const ProjectCreatedPayload = Schema.Struct({
   // Optional so persisted events from older servers still decode.
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   contextRoot: Schema.optional(Schema.NullOr(ProjectContextRoot)),
+  remote: Schema.optional(Schema.NullOr(ProjectRemoteBinding)),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -1330,6 +1423,7 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   contextRoot: Schema.optional(Schema.NullOr(ProjectContextRoot)),
+  remote: Schema.optional(Schema.NullOr(ProjectRemoteBinding)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
   updatedAt: IsoDateTime,
 });
@@ -1343,6 +1437,8 @@ export const ThreadCreatedPayload = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
   taskId: Schema.optional(Schema.NullOr(TaskId)),
+  parentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  sourceQuote: Schema.optional(Schema.NullOr(ThreadSourceQuote)),
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),

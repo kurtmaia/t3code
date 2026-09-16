@@ -872,3 +872,107 @@ describe("buildThreadListV2ListItems", () => {
     ]);
   });
 });
+
+describe("buildThreadListV2Items sub-thread nesting", () => {
+  it("nests active sub-threads directly under their parent with the subThread flag", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({
+          id: ThreadId.make("parent"),
+          title: "Parent",
+          createdAt: "2026-06-01T00:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("sibling"),
+          title: "Sibling",
+          createdAt: "2026-06-01T06:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("child"),
+          title: "Child",
+          parentThreadId: ThreadId.make("parent"),
+          createdAt: "2026-06-01T12:00:00.000Z",
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    // Static sort alone would put the newest thread (child) on top; nesting
+    // moves it directly under its parent instead.
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["sibling", "parent", "child"]);
+    expect(layout.items.map((item) => item.subThread)).toEqual([false, false, true]);
+  });
+
+  it("promotes a sub-thread whose parent is gone to the top level", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({ id: ThreadId.make("solo"), title: "Solo" }),
+        makeThread({
+          id: ThreadId.make("orphan"),
+          title: "Orphan",
+          parentThreadId: ThreadId.make("deleted-parent"),
+          createdAt: "2026-06-01T12:00:00.000Z",
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["orphan", "solo"]);
+    expect(layout.items.map((item) => item.subThread)).toEqual([false, false]);
+  });
+
+  it("nests per lifecycle section: a settled sub-thread of an active parent is a top-level settled row", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({ id: ThreadId.make("parent"), title: "Parent" }),
+        makeThread({
+          id: ThreadId.make("settled-child"),
+          title: "Settled child",
+          parentThreadId: ThreadId.make("parent"),
+          settledOverride: "settled",
+          settledAt: NOW,
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["parent", "settled-child"]);
+    expect(layout.items.map((item) => item.subThread)).toEqual([false, false]);
+    expect(layout.settledCount).toBe(1);
+  });
+
+  it("nests a settled sub-thread under its settled parent", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({
+          id: ThreadId.make("settled-parent"),
+          title: "Settled parent",
+          settledOverride: "settled",
+          settledAt: NOW,
+          latestUserMessageAt: "2026-06-01T00:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("settled-child"),
+          title: "Settled child",
+          parentThreadId: ThreadId.make("settled-parent"),
+          settledOverride: "settled",
+          settledAt: NOW,
+          latestUserMessageAt: "2026-06-01T12:00:00.000Z",
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    // Recency alone would put the child first; it nests under the parent.
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["settled-parent", "settled-child"]);
+    expect(layout.items.map((item) => item.subThread)).toEqual([false, true]);
+  });
+});

@@ -28,6 +28,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { expect } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
+import type { RemoteTerminalTarget } from "../remote/RemoteTerminal.ts";
 import * as TerminalManager from "./Manager.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
 
@@ -214,6 +215,9 @@ interface CreateManagerOptions {
   processKillGraceMs?: number;
   maxRetainedInactiveSessions?: number;
   ptyAdapter?: FakePtyAdapter;
+  remoteTerminalResolver?: (
+    cwd: string,
+  ) => Effect.Effect<RemoteTerminalTarget | null, PtyAdapter.PtySpawnError>;
 }
 
 interface ManagerFixture {
@@ -252,6 +256,9 @@ const createManager = (
           ? { subprocessPollIntervalMs: options.subprocessPollIntervalMs }
           : {}),
         processKillGraceMs: options.processKillGraceMs ?? 1,
+        ...(options.remoteTerminalResolver !== undefined
+          ? { remoteTerminalResolver: options.remoteTerminalResolver }
+          : {}),
         ...(options.maxRetainedInactiveSessions !== undefined
           ? { maxRetainedInactiveSessions: options.maxRetainedInactiveSessions }
           : {}),
@@ -1882,5 +1889,94 @@ it.layer(
       assert.equal(process.killSignals[0], "SIGTERM");
       expect(process.killSignals).toContain("SIGKILL");
     }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  const remoteTarget: RemoteTerminalTarget = {
+    target: { alias: "buildbox", hostname: "buildbox.example.com", username: "deploy", port: null },
+    remotePath: "/srv/app",
+    loginShell: "bash",
+    multiplexArgs: [],
+  };
+
+  const remoteResolver = () => Effect.succeed(remoteTarget);
+
+  it.effect("spawns ssh instead of a local shell", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        remoteTerminalResolver: remoteResolver,
+      });
+      yield* manager.open(openInput());
+
+      const spawn = ptyAdapter.spawnInputs[0];
+      assert.equal(spawn?.shell, "ssh");
+      expect(spawn?.args).toContain("deploy@buildbox.example.com");
+      expect(spawn?.args?.[0]).toBe("-tt");
+    }),
+  );
+
+  it.effect("never falls back to a local shell when ssh cannot spawn", () =>
+    Effect.gen(function* () {
+      const ptyAdapter = new FakePtyAdapter();
+      // Retryable for a local shell list, which is exactly the error that would walk the
+      // fallback chain and silently land the user on their own machine.
+      ptyAdapter.spawnFailures.push(new Error("spawn ENOENT"));
+
+      const { manager } = yield* createManager(5, {
+        ptyAdapter,
+        remoteTerminalResolver: remoteResolver,
+      });
+      yield* Effect.result(manager.open(openInput()));
+
+      assert.equal(ptyAdapter.spawnInputs.length, 1);
+      assert.equal(ptyAdapter.spawnInputs[0]?.shell, "ssh");
+    }),
+  );
+
+  it.effect("still spawns a local shell for an unbound project", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        remoteTerminalResolver: () => Effect.succeed(null),
+      });
+      yield* manager.open(openInput());
+
+      assert.notEqual(ptyAdapter.spawnInputs[0]?.shell, "ssh");
+    }),
+  );
+
+  it.effect("surfaces an unreachable host as an errored terminal, not a local shell", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        remoteTerminalResolver: () =>
+          Effect.fail(
+            new PtyAdapter.PtySpawnError({
+              adapter: "remote-terminal-resolver",
+              shell: "ssh",
+            }),
+          ),
+      });
+
+      const session = yield* manager.open(openInput());
+
+      // Nothing was spawned at all: no ssh, and crucially no local shell either.
+      assert.equal(ptyAdapter.spawnInputs.length, 0);
+      assert.equal(session.status, "error");
+    }),
+  );
+
+  it.effect("re-resolves the binding on restart", () =>
+    Effect.gen(function* () {
+      let bound = false;
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        remoteTerminalResolver: () => Effect.succeed(bound ? remoteTarget : null),
+      });
+
+      yield* manager.open(openInput());
+      assert.notEqual(ptyAdapter.spawnInputs[0]?.shell, "ssh");
+
+      // The project gets bound to a host between the two runs.
+      bound = true;
+      yield* manager.restart(restartInput());
+      assert.equal(ptyAdapter.spawnInputs[1]?.shell, "ssh");
+    }),
   );
 });

@@ -239,6 +239,7 @@ export function projectEvent(
             defaultThreadEnvMode: null,
             faviconPath: payload.faviconPath ?? null,
             contextRoot: payload.contextRoot ?? null,
+            remote: payload.remote ?? null,
             scripts: payload.scripts,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -280,6 +281,7 @@ export function projectEvent(
                   ...(payload.contextRoot !== undefined
                     ? { contextRoot: payload.contextRoot }
                     : {}),
+                  ...(payload.remote !== undefined ? { remote: payload.remote } : {}),
                   ...(payload.scripts !== undefined ? { scripts: payload.scripts } : {}),
                   updatedAt: payload.updatedAt,
                 }
@@ -324,6 +326,8 @@ export function projectEvent(
             branch: payload.branch,
             worktreePath: payload.worktreePath,
             taskId: payload.taskId ?? null,
+            parentThreadId: payload.parentThreadId ?? null,
+            sourceQuote: payload.sourceQuote ?? null,
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,

@@ -485,6 +485,86 @@ describe("rightPanelStore", () => {
     ).toEqual([]);
   });
 
+  describe("sub-thread surfaces", () => {
+    it("opens a draft, replaces it on re-quote, and promotes it in place", () => {
+      const store = useRightPanelStore.getState();
+      store.openSubThreadDraft(refA, { parentMessageId: "message-1", quoteText: "first quote" });
+      store.openSubThreadDraft(refA, { parentMessageId: "message-1", quoteText: "second quote" });
+
+      let state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+      expect(state.surfaces).toEqual([
+        {
+          id: "sub-thread:draft:message-1",
+          kind: "sub-thread",
+          subThreadId: null,
+          parentMessageId: "message-1",
+          quoteText: "second quote",
+        },
+      ]);
+      expect(state.activeSurfaceId).toBe("sub-thread:draft:message-1");
+
+      useRightPanelStore
+        .getState()
+        .promoteSubThreadDraft(refA, "sub-thread:draft:message-1", "thread-sub");
+      state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+      expect(state.surfaces).toEqual([
+        {
+          id: "sub-thread:thread-sub",
+          kind: "sub-thread",
+          subThreadId: "thread-sub",
+          parentMessageId: "message-1",
+          quoteText: "second quote",
+        },
+      ]);
+      expect(state.activeSurfaceId).toBe("sub-thread:thread-sub");
+    });
+
+    it("drops draft sub-thread surfaces on rehydrate but keeps thread-backed ones", () => {
+      expect(
+        migratePersistedRightPanelState({
+          byThreadKey: {
+            "env-1:thread-A": {
+              isOpen: true,
+              activeSurfaceId: "sub-thread:draft:message-1",
+              surfaces: [
+                {
+                  id: "sub-thread:draft:message-1",
+                  kind: "sub-thread",
+                  subThreadId: null,
+                  parentMessageId: "message-1",
+                  quoteText: "draft quote",
+                },
+                {
+                  id: "sub-thread:thread-sub",
+                  kind: "sub-thread",
+                  subThreadId: "thread-sub",
+                  parentMessageId: "message-1",
+                  quoteText: "kept quote",
+                },
+              ],
+            },
+          },
+        }),
+      ).toEqual({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "sub-thread:thread-sub",
+            surfaces: [
+              {
+                id: "sub-thread:thread-sub",
+                kind: "sub-thread",
+                subThreadId: "thread-sub",
+                parentMessageId: "message-1",
+                quoteText: "kept quote",
+              },
+            ],
+          },
+        },
+      });
+    });
+  });
+
   describe("updatePullRequestTabStatus", () => {
     const status = (isDraft: boolean) => ({
       projectId: "project-a",

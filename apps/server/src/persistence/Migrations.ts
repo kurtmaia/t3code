@@ -58,6 +58,8 @@ import Migration0042 from "./Migrations/042_ProjectionTaskSource.ts";
 import Migration0043 from "./Migrations/043_ProjectionThreadTaskId.ts";
 import Migration0044 from "./Migrations/044_ProjectionTaskWorkspace.ts";
 import Migration0045 from "./Migrations/045_ProjectionProjectsContextRoot.ts";
+import Migration0046 from "./Migrations/046_ProjectionProjectsRemoteBinding.ts";
+import Migration0047 from "./Migrations/047_ProjectionThreadsSubThread.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -115,6 +117,8 @@ export const migrationEntries = [
   [43, "ProjectionThreadTaskId", Migration0043],
   [44, "ProjectionTaskWorkspace", Migration0044],
   [45, "ProjectionProjectsContextRoot", Migration0045],
+  [46, "ProjectionProjectsRemoteBinding", Migration0046],
+  [47, "ProjectionThreadsSubThread", Migration0047],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

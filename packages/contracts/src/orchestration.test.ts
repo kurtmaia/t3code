@@ -423,6 +423,74 @@ it.effect("defaults settled fields when decoding historical thread data", () =>
     assert.strictEqual(thread.settledAt, null);
     assert.strictEqual(shell.settledOverride, null);
     assert.strictEqual(shell.settledAt, null);
+
+    // Pre-sub-thread payloads carry neither field.
+    assert.strictEqual(thread.parentThreadId, undefined);
+    assert.strictEqual(thread.sourceQuote, undefined);
+    assert.strictEqual(shell.parentThreadId, undefined);
+    assert.strictEqual(shell.sourceQuote, undefined);
+  }),
+);
+
+it.effect("decodes sub-thread creation and enforces the quote bound", () =>
+  Effect.gen(function* () {
+    const create = yield* decodeOrchestrationCommand({
+      type: "thread.create",
+      commandId: "cmd-subthread-1",
+      threadId: "thread-2",
+      projectId: "project-1",
+      parentThreadId: "thread-1",
+      sourceQuote: {
+        messageId: "message-1",
+        text: "the quoted passage",
+        range: { start: 10, end: 28 },
+      },
+      title: "Re: the quoted passage",
+      modelSelection: { provider: "codex", model: "gpt-5.4" },
+      runtimeMode: "full-access",
+      interactionMode: "plan",
+      branch: null,
+      worktreePath: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.ok(create.type === "thread.create");
+    assert.strictEqual(create.parentThreadId, "thread-1");
+    assert.strictEqual(create.sourceQuote?.messageId, "message-1");
+    assert.strictEqual(create.sourceQuote?.range?.end, 28);
+
+    const created = yield* decodeThreadCreatedPayload({
+      threadId: "thread-2",
+      projectId: "project-1",
+      parentThreadId: "thread-1",
+      sourceQuote: { messageId: "message-1", text: "the quoted passage" },
+      title: "Re: the quoted passage",
+      modelSelection: { provider: "codex", model: "gpt-5.4" },
+      interactionMode: "plan",
+      branch: null,
+      worktreePath: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(created.parentThreadId, "thread-1");
+    assert.strictEqual(created.sourceQuote?.text, "the quoted passage");
+
+    // The quote rides every shell snapshot, so the length cap is contractual.
+    const oversized = yield* decodeOrchestrationCommand({
+      type: "thread.create",
+      commandId: "cmd-subthread-2",
+      threadId: "thread-3",
+      projectId: "project-1",
+      parentThreadId: "thread-1",
+      sourceQuote: { messageId: "message-1", text: "q".repeat(501) },
+      title: "Re: oversized",
+      modelSelection: { provider: "codex", model: "gpt-5.4" },
+      runtimeMode: "full-access",
+      interactionMode: "plan",
+      branch: null,
+      worktreePath: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    }).pipe(Effect.flip);
+    assert.ok(oversized);
   }),
 );
 

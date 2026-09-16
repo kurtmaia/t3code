@@ -11,6 +11,7 @@ import type {
   SnoozePreset,
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { partitionThreadShellsByParent } from "@t3tools/client-runtime/state/subThreads";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
@@ -179,6 +180,27 @@ export function sortThreadsForListV2<T extends { readonly id: string; readonly c
   );
 }
 
+/**
+ * Reorders an already-sorted run of threads so sub-threads sit directly under
+ * their parent, flagged for the indent. Nesting is scoped to the given run: a
+ * sub-thread whose parent is absent (deleted, filtered out, or living in
+ * another section) is promoted to the top level, so no thread ever becomes
+ * unreachable. Shared by the v2 list sections and the legacy grouped Home
+ * list.
+ */
+export function nestThreadsUnderParents<
+  T extends Pick<EnvironmentThreadShell, "id" | "parentThreadId">,
+>(threads: ReadonlyArray<T>): Array<{ readonly thread: T; readonly subThread: boolean }> {
+  const { topLevel, childrenByParent } = partitionThreadShellsByParent(threads);
+  return topLevel.flatMap((thread) => [
+    { thread, subThread: false },
+    ...(childrenByParent.get(thread.id) ?? []).map((child) => ({
+      thread: child,
+      subThread: true,
+    })),
+  ]);
+}
+
 export interface ThreadListV2Item {
   readonly thread: EnvironmentThreadShell;
   readonly variant: "card" | "slim";
@@ -186,6 +208,8 @@ export interface ThreadListV2Item {
   readonly snoozed: boolean;
   /** Pinned-block row: renders the pin glyph and offers Unpin. */
   readonly pinned: boolean;
+  /** Sub-thread nested under its parent's row: renders indented. */
+  readonly subThread: boolean;
   readonly isLast: boolean;
 }
 
@@ -422,7 +446,11 @@ export function buildThreadListV2Items(input: {
     }
   }
 
-  const orderedActive = sortThreadsForListV2(active);
+  // Nesting is per lifecycle section: an active sub-thread nests under an
+  // active parent, a settled one under a settled parent. A sub-thread whose
+  // parent lives elsewhere (other section, other filter) is simply a
+  // top-level row of its own section — never hidden, never orphan-indented.
+  const orderedActive = nestThreadsUnderParents(sortThreadsForListV2(active));
   const orderedSnoozed = [...snoozed].sort(
     (left, right) =>
       parseTimestampMs(left.snoozedUntil ?? "") - parseTimestampMs(right.snoozedUntil ?? ""),
@@ -434,23 +462,27 @@ export function buildThreadListV2Items(input: {
       : orderedSnoozed.filter(
           (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
         );
-  const orderedSettled = [...settled].sort(
-    (left, right) =>
-      firstValidTimestampMs(right.latestUserMessageAt, right.updatedAt) -
-      firstValidTimestampMs(left.latestUserMessageAt, left.updatedAt),
+  // Nest before paging: children sit right after their parent, so a page
+  // prefix can never show a child without the parent row above it.
+  const orderedSettled = nestThreadsUnderParents(
+    [...settled].sort(
+      (left, right) =>
+        firstValidTimestampMs(right.latestUserMessageAt, right.updatedAt) -
+        firstValidTimestampMs(left.latestUserMessageAt, left.updatedAt),
+    ),
   );
   const settledLimit = input.settledLimit ?? Number.POSITIVE_INFINITY;
   const pagedSettled =
     orderedSettled.length > settledLimit ? orderedSettled.slice(0, settledLimit) : orderedSettled;
   const selectedSettled = orderedSettled
     .slice(pagedSettled.length)
-    .find((thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey);
+    .find((entry) => `${entry.thread.environmentId}:${entry.thread.id}` === selectedThreadKey);
   if (selectedSettled !== undefined) pagedSettled.push(selectedSettled);
   const visibleSettled =
     input.settledShelfExpanded !== false
       ? pagedSettled
       : pagedSettled.filter(
-          (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
+          (entry) => `${entry.thread.environmentId}:${entry.thread.id}` === selectedThreadKey,
         );
 
   const items: ThreadListV2Item[] = [];
@@ -460,15 +492,17 @@ export function buildThreadListV2Items(input: {
       variant: "card",
       snoozed: false,
       pinned: true,
+      subThread: false,
       isLast: false,
     });
   }
-  for (const thread of orderedActive) {
+  for (const entry of orderedActive) {
     items.push({
-      thread,
+      thread: entry.thread,
       variant: "card",
       snoozed: false,
       pinned: false,
+      subThread: entry.subThread,
       isLast: false,
     });
   }
@@ -479,16 +513,18 @@ export function buildThreadListV2Items(input: {
       variant: "slim",
       snoozed: true,
       pinned: false,
+      subThread: false,
       isLast: false,
     });
   }
   const settledShelfHeaderIndex = orderedSettled.length > 0 ? items.length : null;
-  for (const thread of visibleSettled) {
+  for (const entry of visibleSettled) {
     items.push({
-      thread,
+      thread: entry.thread,
       variant: "slim",
       snoozed: false,
       pinned: false,
+      subThread: entry.subThread,
       isLast: false,
     });
   }

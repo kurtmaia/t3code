@@ -279,6 +279,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           },
           faviconPath: null,
           contextRoot: "/tmp",
+          remote: null,
           scripts: [
             {
               id: "script-1",
@@ -308,6 +309,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           branch: null,
           worktreePath: null,
           taskId: null,
+          parentThreadId: null,
+          sourceQuote: null,
           latestTurn: {
             turnId: asTurnId("turn-1"),
             state: "completed",
@@ -401,6 +404,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           },
           faviconPath: null,
           contextRoot: "/tmp",
+          remote: null,
           scripts: [
             {
               id: "script-1",
@@ -429,6 +433,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           branch: null,
           worktreePath: null,
           taskId: null,
+          parentThreadId: null,
+          sourceQuote: null,
           latestTurn: {
             turnId: asTurnId("turn-1"),
             state: "completed",

@@ -14,6 +14,7 @@ import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
   listTasksByProjectId,
   listThreadsByProjectId,
+  requireActiveProjectRemoteBindingAbsent,
   requireActiveProjectWorkspaceRootAbsent,
   requireContextRootContainsWorkspaceRoot,
   requireLegalTaskTransition,
@@ -251,6 +252,14 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           contextRoot: command.contextRoot,
         });
       }
+      if (command.remote != null) {
+        yield* requireActiveProjectRemoteBindingAbsent({
+          readModel,
+          command,
+          remote: command.remote,
+          exceptProjectId: command.projectId,
+        });
+      }
 
       return {
         ...(yield* withEventBase({
@@ -267,6 +276,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           defaultModelSelection: command.defaultModelSelection ?? null,
           faviconPath: null,
           contextRoot: command.contextRoot ?? null,
+          remote: command.remote ?? null,
           scripts: [],
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
@@ -285,6 +295,14 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           readModel,
           command,
           workspaceRoot: command.workspaceRoot,
+          exceptProjectId: command.projectId,
+        });
+      }
+      if (command.remote != null) {
+        yield* requireActiveProjectRemoteBindingAbsent({
+          readModel,
+          command,
+          remote: command.remote,
           exceptProjectId: command.projectId,
         });
       }
@@ -321,6 +339,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             : {}),
           ...(command.faviconPath !== undefined ? { faviconPath: command.faviconPath } : {}),
           ...(command.contextRoot !== undefined ? { contextRoot: command.contextRoot } : {}),
+          ...(command.remote !== undefined ? { remote: command.remote } : {}),
           ...(command.scripts !== undefined ? { scripts: command.scripts } : {}),
           updatedAt: occurredAt,
         },
@@ -402,6 +421,34 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      const parentThreadId = command.parentThreadId ?? null;
+      const parentThread = parentThreadId
+        ? yield* requireThread({
+            readModel,
+            command,
+            threadId: parentThreadId,
+          })
+        : null;
+      if (parentThread && parentThread.projectId !== command.projectId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Parent thread '${parentThread.id}' belongs to a different project.`,
+        });
+      }
+      // Sub-threads nest one level: a side conversation about a side
+      // conversation flattens onto the same parent instead.
+      if (parentThread && (parentThread.parentThreadId ?? null) !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${parentThread.id}' is itself a sub-thread and cannot parent another.`,
+        });
+      }
+      if (!parentThread && command.sourceQuote) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "A source quote requires a parent thread.",
+        });
+      }
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -414,6 +461,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           projectId: command.projectId,
           taskId: command.taskId ?? null,
+          parentThreadId,
+          sourceQuote: command.sourceQuote ?? null,
           title: command.title,
           modelSelection: command.modelSelection,
           runtimeMode: command.runtimeMode,

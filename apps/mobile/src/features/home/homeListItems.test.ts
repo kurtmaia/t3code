@@ -242,3 +242,40 @@ describe("buildHomeListLayout", () => {
     expect(layout.items[8]).toMatchObject({ type: "header", isFirst: false });
   });
 });
+
+describe("buildHomeListLayout sub-thread rows", () => {
+  it("flags sub-threads whose parent is in the group and leaves orphans top-level", () => {
+    const project = makeProject("alpha", "alpha");
+    const parent = makeThread("parent", project.id);
+    const child = { ...makeThread("child", project.id), parentThreadId: parent.id };
+    const orphan = {
+      ...makeThread("orphan", project.id),
+      parentThreadId: ThreadId.make("deleted-parent"),
+    };
+    // Group threads arrive nested-ordered from buildHomeThreadGroups
+    // (children directly after their parent).
+    const group: HomeThreadGroup = {
+      key: "alpha",
+      title: "alpha",
+      groupLabel: null,
+      representative: project,
+      projects: [project],
+      pendingTasks: [],
+      threads: [parent, child, orphan],
+      recentThreads: [parent, child, orphan],
+      newThreadTarget: project,
+    };
+
+    const layout = buildHomeListLayout({ groups: [group], displayStates: displayStates({}) });
+
+    expect(
+      layout.items.flatMap((item) =>
+        item.type === "thread" ? [{ id: item.thread.id, isSubThread: item.isSubThread }] : [],
+      ),
+    ).toEqual([
+      { id: "parent", isSubThread: false },
+      { id: "child", isSubThread: true },
+      { id: "orphan", isSubThread: false },
+    ]);
+  });
+});

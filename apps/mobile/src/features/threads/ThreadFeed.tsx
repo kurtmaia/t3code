@@ -1,12 +1,23 @@
 import * as Haptics from "expo-haptics";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { type LegendListRef } from "@legendapp/list/react-native";
-import type { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
+import {
+  subThreadQuoteSnippet,
+  truncateQuote,
+  type SubThreadAnchor,
+} from "@t3tools/client-runtime/state/subThreads";
+import {
+  MessageId,
+  type EnvironmentId,
+  type ThreadId,
+  type ThreadSourceQuote,
+  type TurnId,
+} from "@t3tools/contracts";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { formatElapsed } from "@t3tools/shared/orchestrationTiming";
 import { SymbolView } from "../../components/AppSymbol";
 import { HeaderHeightContext } from "@react-navigation/elements";
-import { useNavigation } from "@react-navigation/native";
+import { StackActions, useNavigation } from "@react-navigation/native";
 import {
   memo,
   useCallback,
@@ -58,7 +69,10 @@ import {
   type SelectableMarkdownSkill,
 } from "../../native/SelectableMarkdownText";
 
+import type { MenuAction } from "@react-native-menu/menu";
+
 import { AppText as Text } from "../../components/AppText";
+import { ControlPillMenu } from "../../components/ControlPill";
 import { CopyTextButton } from "../../components/CopyTextButton";
 import {
   parseReviewCommentMessageSegments,
@@ -102,6 +116,8 @@ import {
 } from "./thread-work-log";
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
 import { useAssetUrl } from "../../state/assets";
+import { useThreadShell } from "../../state/entities";
+import { useSubThreadAnchors } from "../../state/threads";
 import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
@@ -165,7 +181,95 @@ export interface ThreadFeedProps {
     readonly loading: boolean;
     readonly onLoadEarlier: () => void;
   } | null;
+  /** Set on sub-threads: the quoted passage this thread was opened about,
+      rendered as a context header at the top of the transcript. */
+  readonly sourceQuote?: ThreadSourceQuote | null;
+  /** The sub-thread's parent; tapping the quote header opens it while the
+      parent thread still exists. */
+  readonly parentThreadId?: ThreadId | null;
 }
+
+const ASK_ABOUT_MESSAGE_MENU_ACTIONS: MenuAction[] = [
+  { id: "ask-about-this", title: "Ask about this", image: "text.quote" },
+];
+
+/** Quote chips under an assistant message: one per sub-thread anchored to it. */
+const SubThreadAnchorChips = memo(function SubThreadAnchorChips(props: {
+  readonly anchors: ReadonlyArray<SubThreadAnchor>;
+  readonly iconColor: ColorValue;
+  readonly onOpenSubThread: (anchor: SubThreadAnchor) => void;
+}) {
+  return (
+    <View className="mt-1.5 flex-row flex-wrap gap-1.5">
+      {props.anchors.map((anchor) => (
+        <Pressable
+          key={anchor.threadId}
+          accessibilityRole="button"
+          accessibilityLabel={`Open side conversation about “${subThreadQuoteSnippet(anchor.quoteText)}”`}
+          className="flex-row items-center gap-1.5 rounded-full bg-subtle px-3 py-1.5"
+          onPress={() => props.onOpenSubThread(anchor)}
+          style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+        >
+          <SymbolView name="text.quote" size={11} tintColor={props.iconColor} type="monochrome" />
+          <Text
+            className="max-w-[240px] text-xs font-t3-medium text-foreground-muted"
+            numberOfLines={1}
+          >
+            {subThreadQuoteSnippet(anchor.quoteText)}
+          </Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+});
+
+/** Context header for an opened sub-thread: the passage it was asked about,
+    linking back to the parent thread while that thread still exists. */
+const SubThreadContextHeader = memo(function SubThreadContextHeader(props: {
+  readonly quoteText: string;
+  readonly parentAvailable: boolean;
+  readonly iconColor: ColorValue;
+  readonly onOpenParent: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole={props.parentAvailable ? "button" : undefined}
+      accessibilityLabel={
+        props.parentAvailable
+          ? "Quoted from the parent thread. Opens the parent thread."
+          : "Quoted from a deleted parent thread."
+      }
+      className="mb-3 rounded-2xl border border-border bg-card px-3.5 py-3"
+      disabled={!props.parentAvailable}
+      onPress={props.onOpenParent}
+      style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
+    >
+      <View className="flex-row items-start gap-2.5">
+        <View className="mt-0.5">
+          <SymbolView name="text.quote" size={13} tintColor={props.iconColor} type="monochrome" />
+        </View>
+        <View className="min-w-0 flex-1 gap-1">
+          <Text className="text-sm leading-snug text-foreground-secondary" numberOfLines={3}>
+            {props.quoteText}
+          </Text>
+          <View className="flex-row items-center gap-1">
+            <Text className="text-xs font-t3-medium text-foreground-tertiary">
+              {props.parentAvailable ? "From parent thread" : "Parent thread deleted"}
+            </Text>
+            {props.parentAvailable ? (
+              <SymbolView
+                name="chevron.right"
+                size={9}
+                tintColor={props.iconColor}
+                type="monochrome"
+              />
+            ) : null}
+          </View>
+        </View>
+      </View>
+    </Pressable>
+  );
+});
 
 function MessageAttachmentImage(props: {
   readonly environmentId: EnvironmentId;
@@ -805,6 +909,9 @@ function renderFeedEntry(
     readonly onToggleTurnFold: (turnId: TurnId) => void;
     readonly onPressImage: (uri: string, headers?: Record<string, string>) => void;
     readonly onMarkdownLinkPress: (href: string) => void;
+    readonly subThreadAnchors: ReadonlyMap<MessageId, ReadonlyArray<SubThreadAnchor>> | null;
+    readonly onAskAboutMessage: (messageId: string, text: string) => void;
+    readonly onOpenSubThread: (anchor: SubThreadAnchor) => void;
     readonly iconSubtleColor: string | import("react-native").ColorValue;
     readonly userBubbleColor: string | import("react-native").ColorValue;
     readonly markdownStyles: MarkdownStyleSets;
@@ -942,11 +1049,9 @@ function renderFeedEntry(
     }
 
     const enterAnimated = isFreshTimestamp(message.createdAt);
-    return (
-      <Animated.View
-        className={cn(showAssistantMeta ? "mb-5 px-1" : "mb-2 px-1")}
-        {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
-      >
+    const messageAnchors = props.subThreadAnchors?.get(MessageId.make(message.id)) ?? null;
+    const assistantBody = (
+      <>
         {message.text.trim().length > 0 ? (
           hasNativeSelectableMarkdownText() ? (
             <SelectableMarkdownText
@@ -977,6 +1082,38 @@ function renderFeedEntry(
             />
           );
         })}
+      </>
+    );
+    return (
+      <Animated.View
+        className={cn(showAssistantMeta ? "mb-5 px-1" : "mb-2 px-1")}
+        {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
+      >
+        {message.text.trim().length > 0 ? (
+          // Long-press opens the message menu (ControlPillMenu injects the
+          // long-press handler into this pressable on both platforms); taps
+          // and native text selection pass through untouched.
+          <ControlPillMenu
+            actions={ASK_ABOUT_MESSAGE_MENU_ACTIONS}
+            onPressAction={({ nativeEvent }) => {
+              if (nativeEvent.event === "ask-about-this") {
+                props.onAskAboutMessage(message.id, message.text);
+              }
+            }}
+            shouldOpenOnLongPress
+          >
+            <Pressable>{assistantBody}</Pressable>
+          </ControlPillMenu>
+        ) : (
+          assistantBody
+        )}
+        {messageAnchors !== null && messageAnchors.length > 0 ? (
+          <SubThreadAnchorChips
+            anchors={messageAnchors}
+            iconColor={iconSubtleColor}
+            onOpenSubThread={props.onOpenSubThread}
+          />
+        ) : null}
         {showAssistantMeta ? (
           <View className="mt-1 flex-row items-center gap-1">
             <CopyTextButton
@@ -1387,6 +1524,57 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
   const iconSubtleColor = useThemeColor("--color-icon-subtle");
   const userBubbleColor = useThemeColor("--color-user-bubble");
+  // Quote anchors for this thread's messages. The atom only publishes when a
+  // sub-thread appears or disappears (both fields are write-once), so this
+  // subscription stays quiet through streaming and session churn.
+  const subThreadAnchors = useSubThreadAnchors(props.environmentId, props.threadId);
+  const sourceQuote = props.sourceQuote ?? null;
+  const parentThreadRef = useMemo(
+    () =>
+      props.parentThreadId != null
+        ? { environmentId: props.environmentId, threadId: props.parentThreadId }
+        : null,
+    [props.environmentId, props.parentThreadId],
+  );
+  const parentThreadShell = useThreadShell(sourceQuote !== null ? parentThreadRef : null);
+  const handleAskAboutMessage = useCallback(
+    (messageId: string, text: string) => {
+      void Haptics.selectionAsync();
+      navigation.navigate("SubThreadDraft", {
+        environmentId: String(props.environmentId),
+        threadId: String(props.threadId),
+        messageId,
+        quote: truncateQuote(text),
+      });
+    },
+    [navigation, props.environmentId, props.threadId],
+  );
+  // Push (not navigate): "Thread" is already the current route, and navigate
+  // would retarget it in place — the back gesture must return to this thread.
+  const handleOpenSubThread = useCallback(
+    (anchor: SubThreadAnchor) => {
+      void Haptics.selectionAsync();
+      navigation.dispatch(
+        StackActions.push("Thread", {
+          environmentId: String(props.environmentId),
+          threadId: String(anchor.threadId),
+        }),
+      );
+    },
+    [navigation, props.environmentId],
+  );
+  const handleOpenParentThread = useCallback(() => {
+    if (parentThreadRef === null) {
+      return;
+    }
+    void Haptics.selectionAsync();
+    navigation.dispatch(
+      StackActions.push("Thread", {
+        environmentId: String(parentThreadRef.environmentId),
+        threadId: String(parentThreadRef.threadId),
+      }),
+    );
+  }, [navigation, parentThreadRef]);
   const onMarkdownLinkPress = useCallback(
     (href: string) => {
       const presentation = resolveMarkdownLinkPresentation(href);
@@ -1424,6 +1612,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       iconSubtleColor,
       markdownStyles,
       reviewCommentColors,
+      subThreadAnchors,
       userBubbleColor,
       viewportWidth,
     }),
@@ -1433,6 +1622,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       iconSubtleColor,
       markdownStyles,
       reviewCommentColors,
+      subThreadAnchors,
       userBubbleColor,
       viewportWidth,
     ],
@@ -1804,6 +1994,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         onToggleTurnFold,
         onPressImage,
         onMarkdownLinkPress,
+        subThreadAnchors,
+        onAskAboutMessage: handleAskAboutMessage,
+        onOpenSubThread: handleOpenSubThread,
         iconSubtleColor,
         userBubbleColor,
         markdownStyles,
@@ -1823,6 +2016,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       reviewCommentColors,
       reviewCommentBubbleWidth,
       userBubbleMaxWidth,
+      handleAskAboutMessage,
+      handleOpenSubThread,
       onCopyWorkRow,
       onMarkdownLinkPress,
       onPressImage,
@@ -1831,6 +2026,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       onToggleWorkRow,
       props.environmentId,
       props.skills,
+      subThreadAnchors,
     ],
   );
 
@@ -1960,6 +2156,14 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             ListHeaderComponent={
               <>
                 {usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />}
+                {sourceQuote !== null ? (
+                  <SubThreadContextHeader
+                    quoteText={sourceQuote.text}
+                    parentAvailable={parentThreadShell !== null}
+                    iconColor={iconSubtleColor}
+                    onOpenParent={handleOpenParentThread}
+                  />
+                ) : null}
                 {props.loadEarlier != null ? (
                   <Pressable
                     onPress={props.loadEarlier.onLoadEarlier}

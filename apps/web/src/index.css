@@ -1967,3 +1967,10 @@ code {
 .ultrathink-chroma {
   animation: ultrathink-chroma-shift 10s linear infinite;
 }
+
+/* Sub-thread quote anchors: static tint over the quoted passage in the parent
+   transcript (CSS Custom Highlight API; browsers without it just show the
+   chip row under the message). */
+::highlight(sub-thread-quote) {
+  background-color: color-mix(in oklab, var(--color-primary) 14%, transparent);
+}

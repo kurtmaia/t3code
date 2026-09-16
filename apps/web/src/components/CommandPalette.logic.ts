@@ -193,6 +193,7 @@ export type BuildThreadActionItemsThread = Pick<
 > & {
   updatedAt: string;
   latestUserMessageAt?: string | null;
+  parentThreadId?: SidebarThreadSummary["id"] | null | undefined;
 };
 
 export function buildThreadActionItems<TThread extends BuildThreadActionItemsThread>(input: {
@@ -249,7 +250,9 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
           thread.branch ?? ``,
           contentMatch?.snippet ?? ``,
         ],
-        title: thread.title,
+        // Sub-thread titles echo their parent's topic; the marker keeps the
+        // flat palette list disambiguated without nesting it.
+        title: (thread.parentThreadId ?? null) !== null ? `↳ ${thread.title}` : thread.title,
         description,
         timestamp: formatRelativeTimeLabel(
           thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,

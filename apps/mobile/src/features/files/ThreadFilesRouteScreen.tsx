@@ -79,10 +79,12 @@ function normalizeRouteLine(value: string | null): number | null {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
-function defaultViewMode(path: string | null): FileViewMode {
-  return path !== null && (isBrowserPreviewFile(path) || isImagePreviewFile(path))
-    ? "preview"
-    : "source";
+function defaultViewMode(path: string | null, targetLine: number | null): FileViewMode {
+  if (path === null) return "source";
+  if (isBrowserPreviewFile(path) || isImagePreviewFile(path)) return "preview";
+  // Markdown reads better rendered, but a targeted line only exists in the
+  // source, so a line link still opens the source.
+  return isMarkdownPreviewFile(path) && targetLine === null ? "preview" : "source";
 }
 
 function FileContent(props: {
@@ -486,7 +488,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const activeMode =
     relativePath !== null && modeOverride?.path === relativePath
       ? modeOverride.mode
-      : defaultViewMode(relativePath);
+      : defaultViewMode(relativePath, targetLine);
   const resolvedActiveMode = canPreview ? activeMode : "source";
   const assetPreviewPath = isBrowserFile || isImageFile ? relativePath : null;
   const assetPreviewUri = useWorkspaceFileAssetUrl({

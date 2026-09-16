@@ -502,6 +502,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             defaultThreadEnvMode: null,
             faviconPath: event.payload.faviconPath ?? null,
             contextRoot: event.payload.contextRoot ?? null,
+            remote: event.payload.remote ?? null,
             scripts: event.payload.scripts,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
@@ -534,6 +535,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...(event.payload.contextRoot !== undefined
               ? { contextRoot: event.payload.contextRoot }
               : {}),
+            ...(event.payload.remote !== undefined ? { remote: event.payload.remote } : {}),
             ...(event.payload.scripts !== undefined ? { scripts: event.payload.scripts } : {}),
             updatedAt: event.payload.updatedAt,
           });
@@ -620,6 +622,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,
             taskId: event.payload.taskId ?? null,
+            parentThreadId: event.payload.parentThreadId ?? null,
+            sourceQuote: event.payload.sourceQuote ?? null,
             latestTurnId: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,

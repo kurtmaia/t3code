@@ -6,6 +6,10 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
+import {
+  subThreadQuoteSnippet,
+  type SubThreadAnchor,
+} from "@t3tools/client-runtime/state/subThreads";
 import type { AgentPanelModel } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   emptyAgentPanelModel,
@@ -55,6 +59,7 @@ import {
   GlobeIcon,
   HammerIcon,
   MessageCircleIcon,
+  MessageSquareQuote,
   MousePointerClickIcon,
   PaintbrushIcon,
   MinusIcon,
@@ -145,6 +150,10 @@ interface TimelineRowSharedState {
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
   agentPanelModel: AgentPanelModel;
   onOpenAgents: () => void;
+  /** Sub-thread anchors for this thread's messages, keyed by quoted message
+      id; null when the surface hosting the timeline has no sub-thread UI. */
+  subThreadAnchorsByMessageId: ReadonlyMap<string, ReadonlyArray<SubThreadAnchor>> | null;
+  onOpenSubThread: ((anchor: SubThreadAnchor) => void) | null;
 }
 
 interface TimelineRowActivityState {
@@ -242,6 +251,8 @@ interface MessagesTimelineProps {
   topFadeEnabled?: boolean;
   /** Non-null when older turns exist beyond the loaded window. */
   loadEarlier?: { readonly loading: boolean; readonly onLoadEarlier: () => void } | null;
+  subThreadAnchorsByMessageId?: ReadonlyMap<string, ReadonlyArray<SubThreadAnchor>> | null;
+  onOpenSubThread?: ((anchor: SubThreadAnchor) => void) | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -281,6 +292,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
   loadEarlier = null,
+  subThreadAnchorsByMessageId = null,
+  onOpenSubThread = null,
 }: MessagesTimelineProps) {
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
@@ -518,6 +531,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleWorkGroup,
       agentPanelModel,
       onOpenAgents,
+      subThreadAnchorsByMessageId,
+      onOpenSubThread,
     }),
     [
       timestampFormat,
@@ -534,6 +549,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleWorkGroup,
       agentPanelModel,
       onOpenAgents,
+      subThreadAnchorsByMessageId,
+      onOpenSubThread,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -1123,6 +1140,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           resolvedTheme={ctx.resolvedTheme}
           onOpenTurnDiff={ctx.onOpenTurnDiff}
         />
+        <AssistantSubThreadAnchors messageId={row.message.id} />
         {row.showAssistantMeta ? (
           <div className="mt-1.5 flex items-center gap-2 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant:opacity-100">
             <AssistantCopyButton row={row} />
@@ -1142,6 +1160,35 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         ) : null}
       </div>
     </>
+  );
+}
+
+/**
+ * The message-level way back into side conversations quoted from this
+ * message. Always renders when anchors exist — the inline quote highlight is
+ * decoration on top and can miss (edited messages, ambiguous quotes); this
+ * row is the guaranteed affordance.
+ */
+function AssistantSubThreadAnchors({ messageId }: { messageId: MessageId }) {
+  const ctx = use(TimelineRowCtx);
+  const anchors = ctx.subThreadAnchorsByMessageId?.get(messageId);
+  if (!anchors || anchors.length === 0 || ctx.onOpenSubThread === null) {
+    return null;
+  }
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-1.5">
+      {anchors.map((anchor) => (
+        <button
+          key={anchor.threadId}
+          type="button"
+          onClick={() => ctx.onOpenSubThread?.(anchor)}
+          className="flex max-w-72 items-center gap-1.5 rounded-full border border-border/80 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+        >
+          <MessageSquareQuote className="size-3 shrink-0" />
+          <span className="truncate">{subThreadQuoteSnippet(anchor.quoteText)}</span>
+        </button>
+      ))}
+    </div>
   );
 }
 

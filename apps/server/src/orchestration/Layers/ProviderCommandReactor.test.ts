@@ -1510,6 +1510,55 @@ describe("ProviderCommandReactor", () => {
     expect(harness.refreshStatus.mock.calls[0]?.[0]).toBe("/tmp/provider-project-worktree");
   });
 
+  it("never renames the shared branch from a sub-thread's first turn", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    // A sub-thread joins its parent's worktree; even on a still-temporary
+    // branch, its first turn must not rename the branch out from under the
+    // parent's shell record.
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-sub-thread-create"),
+        threadId: ThreadId.make("thread-sub"),
+        projectId: asProjectId("project-1"),
+        parentThreadId: ThreadId.make("thread-1"),
+        sourceQuote: {
+          messageId: asMessageId("assistant-message-quoted"),
+          text: "the quoted passage",
+        },
+        title: "Re: the quoted passage",
+        modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.3-codex"),
+        interactionMode: "plan",
+        runtimeMode: "approval-required",
+        branch: "t3code/1234abcd",
+        worktreePath: "/tmp/provider-project-worktree",
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-sub-thread-turn-start"),
+        threadId: ThreadId.make("thread-sub"),
+        message: {
+          messageId: asMessageId("user-message-sub-thread"),
+          role: "user",
+          text: "Why is this passage true?",
+          attachments: [],
+        },
+        interactionMode: "plan",
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.generateBranchName).not.toHaveBeenCalled();
+  });
+
   it("forwards codex model options through session start and turn send", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

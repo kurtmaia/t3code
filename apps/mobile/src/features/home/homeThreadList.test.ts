@@ -771,3 +771,72 @@ describe("buildHomeThreadGroups", () => {
     expect(groups[0]?.newThreadTarget?.id).toBe(desktopProject.id);
   });
 });
+
+describe("buildHomeThreadGroups sub-thread nesting", () => {
+  const environmentId = EnvironmentId.make("environment-local");
+
+  it("orders sub-threads directly under their parent within a group", () => {
+    const project = makeProject({
+      environmentId,
+      id: ProjectId.make("project-1"),
+      title: "Project",
+    });
+    const threads = [
+      makeThread({
+        environmentId,
+        id: ThreadId.make("parent"),
+        projectId: project.id,
+        title: "Parent",
+        updatedAt: "2026-06-27T00:00:00.000Z",
+      }),
+      makeThread({
+        environmentId,
+        id: ThreadId.make("other"),
+        projectId: project.id,
+        title: "Other",
+        updatedAt: "2026-06-29T00:00:00.000Z",
+      }),
+      makeThread({
+        environmentId,
+        id: ThreadId.make("child"),
+        projectId: project.id,
+        title: "Child",
+        parentThreadId: ThreadId.make("parent"),
+        updatedAt: "2026-06-28T00:00:00.000Z",
+      }),
+    ];
+
+    // Recency alone would order other → child → parent; nesting pulls the
+    // child under its parent while the top level stays recency-sorted.
+    const groups = buildGroups([project], threads);
+    expect(groups[0]?.threads.map((thread) => thread.id)).toEqual(["other", "parent", "child"]);
+  });
+
+  it("keeps an orphaned sub-thread at its own sorted top-level position", () => {
+    const project = makeProject({
+      environmentId,
+      id: ProjectId.make("project-1"),
+      title: "Project",
+    });
+    const threads = [
+      makeThread({
+        environmentId,
+        id: ThreadId.make("other"),
+        projectId: project.id,
+        title: "Other",
+        updatedAt: "2026-06-27T00:00:00.000Z",
+      }),
+      makeThread({
+        environmentId,
+        id: ThreadId.make("orphan"),
+        projectId: project.id,
+        title: "Orphan",
+        parentThreadId: ThreadId.make("deleted-parent"),
+        updatedAt: "2026-06-28T00:00:00.000Z",
+      }),
+    ];
+
+    const groups = buildGroups([project], threads);
+    expect(groups[0]?.threads.map((thread) => thread.id)).toEqual(["orphan", "other"]);
+  });
+});

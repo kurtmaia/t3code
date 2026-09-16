@@ -81,6 +81,11 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
 
     // A context root is an existing directory the project sits under; it is never created
     // on the project's behalf. Null and absent pass through untouched so a clear stays a clear.
+    //
+    // A `remote` binding is deliberately absent from this function. Its `remotePath` lives on
+    // another machine, so resolving it against this host's cwd or expanding `~` to this host's
+    // HOME would silently produce a path that does not exist there. It rides through on the
+    // command spread untouched.
     const normalizeProjectContextRoot = (contextRoot: string | null | undefined) =>
       typeof contextRoot === "string"
         ? normalizeProjectWorkspaceRoot(contextRoot)

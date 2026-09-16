@@ -143,6 +143,7 @@ import {
   resolveWorkingStartedAt,
   sortLogicalProjectsForSidebar,
   sortPinnedThreadsForSidebar,
+  nestSubThreadsInSidebarList,
   sortSettledThreadsForSidebar,
   sortThreadsForSidebar,
 } from "./Sidebar.logic";
@@ -719,6 +720,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // the descriptor is not loaded. Pinning itself lives in the context menu.
   pinningSupported: boolean;
   isPinned: boolean;
+  // Sub-thread rendered under its parent: indented, with a leading rail.
+  nested?: boolean;
   // Present only on pinned cards whose server supports reordering: dnd-kit
   // sortable bag applied to the card root so the whole card drags (the
   // pointer sensor's distance constraint keeps plain clicks working).
@@ -1359,6 +1362,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       className={cn(
         "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_96px]",
         sortable?.isDragging && "z-20 opacity-80",
+        props.nested && "ml-3 border-l border-sidebar-border/60 pl-1.5",
       )}
     >
       <Tooltip>
@@ -2009,6 +2013,7 @@ export default function Sidebar() {
     activeThreads,
     snoozedThreads,
     settledThreads,
+    nestedThreadKeys,
     snoozeNow,
   } = useMemo(() => {
     const now = `${nowMinute}:00.000Z`;
@@ -2076,6 +2081,10 @@ export default function Sidebar() {
     // Server capability only gates DRAGGING — it must not influence the
     // sort, or mixed-version fleets would render different pinned orders on
     // web and mobile from the same data.
+    // Sub-threads nest under their parent within a shelf; a child whose
+    // parent classified into a different shelf renders top-level there.
+    const nestedActive = nestSubThreadsInSidebarList(sortThreadsForSidebar(active));
+    const nestedSettled = nestSubThreadsInSidebarList(sortSettledThreadsForSidebar(settled));
     return {
       pinnedThreads: sortPinnedThreadsForSidebar(pinned),
       reorderablePinnedKeys: new Set(
@@ -2087,14 +2096,15 @@ export default function Sidebar() {
           )
           .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
       ),
-      activeThreads: sortThreadsForSidebar(active),
+      activeThreads: nestedActive.ordered,
       // Soonest wake first: "what comes back next" is the shelf's question.
       snoozedThreads: snoozed.toSorted(
         (left, right) =>
           firstValidTimestampMs(left.snoozedUntil ?? null) -
           firstValidTimestampMs(right.snoozedUntil ?? null),
       ),
-      settledThreads: sortSettledThreadsForSidebar(settled),
+      settledThreads: nestedSettled.ordered,
+      nestedThreadKeys: new Set([...nestedActive.nestedKeys, ...nestedSettled.nestedKeys]),
       snoozeNow: preciseNow,
     };
   }, [
@@ -3721,6 +3731,7 @@ export default function Sidebar() {
                             .threadPinning === true
                         }
                         isPinned={section === "pinned"}
+                        nested={nestedThreadKeys.has(threadKey)}
                         sortable={sortable}
                         snoozeWakeLabelText={
                           section === "snoozed" && thread.snoozedUntil != null

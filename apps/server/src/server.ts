@@ -43,6 +43,9 @@ import * as GitHubCli from "./sourceControl/GitHubCli.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
+import { ProjectionProjectRepositoryLive } from "./persistence/Layers/ProjectionProjects.ts";
+import * as RemoteHostService from "./remote/RemoteHostService.ts";
+import * as RemoteTerminalResolver from "./remote/RemoteTerminalResolver.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
@@ -326,9 +329,20 @@ const CheckpointingLayerLive = Layer.empty.pipe(
 
 const PortScannerLayerLive = PortScanner.layer.pipe(Layer.provide(ProcessRunner.layer));
 
+/**
+ * The remote stack for project bindings. `RemoteHostService` owns the ssh connection policy;
+ * `RemoteTerminalResolver` answers "does this directory live on another host" from the
+ * project record, which is why it needs the projection repository rather than the client.
+ */
+const RemoteLayerLive = RemoteTerminalResolver.layer.pipe(
+  Layer.provide(RemoteHostService.layer),
+  Layer.provide(ProjectionProjectRepositoryLive),
+);
+
 const TerminalLayerLive = TerminalManager.layer.pipe(
   Layer.provide(PtyAdapterLive),
   Layer.provide(PortScannerLayerLive),
+  Layer.provide(RemoteLayerLive),
 );
 
 const PreviewLayerLive = Layer.empty.pipe(
