@@ -121,6 +121,7 @@ export function SubThreadDraftScreen(props: {
       promptText: buildSubThreadSeedPrompt({ quoteText: quote.text, question: trimmedQuestion }),
       modelSelection: parentShell.modelSelection,
       runtimeMode: parentShell.runtimeMode,
+      interactionMode: parentShell.interactionMode,
       createdAt: new Date().toISOString(),
     });
 
@@ -239,7 +240,7 @@ export function SubThreadDraftScreen(props: {
               onPress={() => void onSend()}
             />
             <Text className="text-center text-xs leading-normal text-foreground-tertiary">
-              The side conversation starts in plan mode and shares the parent thread workspace.
+              The side conversation uses the parent thread's mode and workspace.
             </Text>
           </>
         )}

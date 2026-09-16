@@ -12,6 +12,7 @@ import {
   type MessageId,
   type ModelSelection,
   type OrchestrationThreadShell,
+  type ProviderInteractionMode,
   type RuntimeMode,
   type ThreadId,
   type ThreadSourceQuote,
@@ -73,8 +74,8 @@ export function buildSubThreadSeedPrompt(input: {
 /**
  * The `thread.create` + `thread.turn.start` inputs for a sub-thread, mirroring
  * the plan-implementation flow: join the parent's worktree (never bootstrap a
- * new one), start in plan mode, seed the title from the quote but leave it
- * replaceable by auto-titling via `titleSeed`.
+ * new one), start in the caller-supplied mode (the parent's), seed the title
+ * from the quote but leave it replaceable by auto-titling via `titleSeed`.
  */
 export function buildSubThreadCreation(input: {
   readonly threadId: ThreadId;
@@ -89,6 +90,7 @@ export function buildSubThreadCreation(input: {
   readonly promptText: string;
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
+  readonly interactionMode: ProviderInteractionMode;
   readonly createdAt: string;
 }) {
   const title = buildSubThreadTitle(input.quote.text);
@@ -102,7 +104,7 @@ export function buildSubThreadCreation(input: {
       title,
       modelSelection: input.modelSelection,
       runtimeMode: input.runtimeMode,
-      interactionMode: "plan" as const,
+      interactionMode: input.interactionMode,
       branch: input.parent.branch,
       worktreePath: input.parent.worktreePath,
       createdAt: input.createdAt,
@@ -118,7 +120,7 @@ export function buildSubThreadCreation(input: {
       modelSelection: input.modelSelection,
       titleSeed: title,
       runtimeMode: input.runtimeMode,
-      interactionMode: "plan" as const,
+      interactionMode: input.interactionMode,
       createdAt: input.createdAt,
     },
   };

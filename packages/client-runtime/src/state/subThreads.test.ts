@@ -83,7 +83,7 @@ describe("buildSubThreadSeedPrompt", () => {
 });
 
 describe("buildSubThreadCreation", () => {
-  it("joins the parent worktree in plan mode with a replaceable title", () => {
+  it("joins the parent worktree in the given mode with a replaceable title", () => {
     const { createInput, startInput } = buildSubThreadCreation({
       threadId: ThreadId.make("thread-sub"),
       messageId: MessageId.make("message-user-1"),
@@ -98,18 +98,19 @@ describe("buildSubThreadCreation", () => {
       promptText: "formatted prompt",
       modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
       runtimeMode: "full-access",
+      interactionMode: "default",
       createdAt: "2026-01-01T00:00:00.000Z",
     });
 
     expect(createInput.parentThreadId).toBe(PARENT_ID);
     expect(createInput.sourceQuote?.messageId).toBe(MESSAGE_ID);
-    expect(createInput.interactionMode).toBe("plan");
+    expect(createInput.interactionMode).toBe("default");
     expect(createInput.branch).toBe("t3code/feature");
     expect(createInput.worktreePath).toBe("/tmp/worktree");
     expect(createInput.title).toBe("Re: the exact point");
     // titleSeed matches the pre-set title so auto-titling may replace it.
     expect(startInput.titleSeed).toBe(createInput.title);
-    expect(startInput.interactionMode).toBe("plan");
+    expect(startInput.interactionMode).toBe("default");
     expect(startInput.message.text).toBe("formatted prompt");
   });
 });
