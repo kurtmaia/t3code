@@ -35,12 +35,14 @@ export function buildPhysicalToLogicalProjectKeyMap(input: {
   projects: ReadonlyArray<Project>;
   settings: ProjectGroupingSettings;
   primaryEnvironmentId: EnvironmentId | null;
+  splitByEnvironment?: boolean;
 }): Map<string, string> {
   const mapping = new Map<string, string>();
   const groups = buildProjectGroups({
     projects: input.projects,
     settings: input.settings,
     preferredEnvironmentId: input.primaryEnvironmentId,
+    splitByEnvironment: input.splitByEnvironment ?? false,
   });
   for (const group of groups) {
     for (const member of group.members) {
@@ -60,11 +62,13 @@ export function buildSidebarProjectSnapshots(input: {
   // env" so callers that don't care about the distinction get the
   // legacy behavior.
   isDesktopLocalEnvironment?: (environmentId: EnvironmentId) => boolean;
+  splitByEnvironment?: boolean;
 }): SidebarProjectSnapshot[] {
   return buildProjectGroups({
     projects: input.projects,
     settings: input.settings,
     preferredEnvironmentId: input.primaryEnvironmentId,
+    splitByEnvironment: input.splitByEnvironment ?? false,
   }).map((group): SidebarProjectSnapshot => {
     const members = group.members.map(
       ({ physicalProjectKey, project }): SidebarProjectGroupMember => ({
@@ -154,4 +158,54 @@ export function buildSidebarProjectPickerEntries(input: {
     ...entries.slice(0, preferredIndex),
     ...entries.slice(preferredIndex + 1),
   ];
+}
+
+export interface SidebarEnvironmentSection<T> {
+  environmentId: EnvironmentId;
+  label: string;
+  isPrimary: boolean;
+  items: T[];
+}
+
+// Sidebars section by environment only once projects live on 2+ of them;
+// single-environment users keep the unsectioned layout.
+export function projectsSpanMultipleEnvironments(
+  projects: ReadonlyArray<Pick<Project, "environmentId">>,
+): boolean {
+  const first = projects[0]?.environmentId;
+  return projects.some((project) => project.environmentId !== first);
+}
+
+// Buckets already-sorted items by environment, keeping the caller's order
+// within each section. The primary environment leads; the rest follow by
+// label so sections never reshuffle as activity changes.
+export function groupByEnvironment<T>(
+  items: ReadonlyArray<T>,
+  getEnvironmentId: (item: T) => EnvironmentId,
+  input: {
+    primaryEnvironmentId: EnvironmentId | null;
+    resolveEnvironmentLabel: (environmentId: EnvironmentId) => string | null;
+  },
+): SidebarEnvironmentSection<T>[] {
+  const sectionsById = new Map<EnvironmentId, SidebarEnvironmentSection<T>>();
+  for (const item of items) {
+    const environmentId = getEnvironmentId(item);
+    let section = sectionsById.get(environmentId);
+    if (!section) {
+      const isPrimary = environmentId === input.primaryEnvironmentId;
+      section = {
+        environmentId,
+        label:
+          input.resolveEnvironmentLabel(environmentId) ?? (isPrimary ? "This device" : "Remote"),
+        isPrimary,
+        items: [],
+      };
+      sectionsById.set(environmentId, section);
+    }
+    section.items.push(item);
+  }
+  return Array.from(sectionsById.values()).toSorted(
+    (left, right) =>
+      Number(right.isPrimary) - Number(left.isPrimary) || left.label.localeCompare(right.label),
+  );
 }

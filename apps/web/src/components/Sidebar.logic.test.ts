@@ -1090,6 +1090,18 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Awaiting Input", pulse: false });
   });
 
+  it("shows failed when the session errored, even with background work still live", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          backgroundLiveness: "working",
+          session: { ...baseThread.session, status: "error", activeTurnId: null },
+        },
+      }),
+    ).toMatchObject({ label: "Failed", pulse: false });
+  });
+
   it("falls back to working when the thread is actively running without blockers", () => {
     expect(
       resolveThreadStatusPill({
