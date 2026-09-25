@@ -72,6 +72,26 @@ describe("buildProjectGroups", () => {
     }
   });
 
+  it("splits one repository into a group per environment when asked", () => {
+    const remoteEnvironmentId = EnvironmentId.make("remote");
+    const projects = [
+      makeProject("local", "/work/t3code"),
+      makeProject("local-2", "/work/t3code-2"),
+      makeProject("remote", "/home/dev/t3code", { environmentId: remoteEnvironmentId }),
+    ];
+
+    expect(buildProjectGroups({ projects, settings: settings("repository") })).toHaveLength(1);
+    const groups = buildProjectGroups({
+      projects,
+      settings: settings("repository"),
+      splitByEnvironment: true,
+    });
+    expect(
+      groups.map((group) => group.memberProjectRefs.map((ref) => ref.projectId as string)),
+    ).toEqual([["local", "local-2"], ["remote"]]);
+    expect(new Set(groups.map((group) => group.key)).size).toBe(2);
+  });
+
   it("uses a shared custom title as the repository group's label", () => {
     const projects = [
       makeProject("first", "/work/t3code", { title: "Custom project" }),

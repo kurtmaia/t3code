@@ -256,12 +256,19 @@ function selectProjectIdentitySource<TProject extends EnvironmentProject>(
  * Presentation-specific metadata, filtering, and activity sorting stay in
  * each client. Grouping modes, overrides, physical deduplication, labels, and
  * member preservation live here so web and mobile cannot drift.
+ *
+ * `splitByEnvironment` keeps every group inside one environment, so the same
+ * repository on two machines becomes two groups. Sidebars set it when they
+ * render one section per environment.
  */
 export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
   readonly projects: ReadonlyArray<TProject>;
   readonly settings: ProjectGroupingSettings;
   readonly preferredEnvironmentId?: EnvironmentId | null;
+  readonly splitByEnvironment?: boolean;
 }): ReadonlyArray<ProjectGroup<TProject>> {
+  const scopeKey = (project: TProject, logicalKey: string): string =>
+    input.splitByEnvironment ? `${project.environmentId}|${logicalKey}` : logicalKey;
   const projectsByPhysicalKey = new Map<string, TProject[]>();
   for (const project of input.projects) {
     const physicalProjectKey = derivePhysicalProjectKey(project);
@@ -280,9 +287,12 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
       shouldReplacePhysicalProjectWinner(current, candidate) ? candidate : current,
     );
     const identitySource = selectProjectIdentitySource(physicalProjects, winner);
-    const logicalKey = deriveLogicalProjectKey(identitySource, {
-      groupingMode: resolveProjectGroupingMode(winner, input.settings),
-    });
+    const logicalKey = scopeKey(
+      winner,
+      deriveLogicalProjectKey(identitySource, {
+        groupingMode: resolveProjectGroupingMode(winner, input.settings),
+      }),
+    );
     logicalKeyByPhysicalKey.set(physicalProjectKey, logicalKey);
     const member = { physicalProjectKey, project: winner };
     const existing = groupedMembers.get(logicalKey);
@@ -299,7 +309,7 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
     const physicalProjectKey = derivePhysicalProjectKey(project);
     const logicalKey =
       logicalKeyByPhysicalKey.get(physicalProjectKey) ??
-      deriveLogicalProjectKeyFromSettings(project, input.settings);
+      scopeKey(project, deriveLogicalProjectKeyFromSettings(project, input.settings));
     const projectRefKey = scopedProjectKey(scopeProjectRef(project.environmentId, project.id));
     if (seenProjectRefs.has(projectRefKey)) continue;
     seenProjectRefs.add(projectRefKey);
