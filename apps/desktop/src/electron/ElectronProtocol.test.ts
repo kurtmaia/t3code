@@ -71,6 +71,10 @@ describe("ElectronProtocol", () => {
             response.headers.get("content-security-policy") ?? "",
             "font-src 'self' t3code-dev: data:",
           );
+          assert.include(
+            response.headers.get("content-security-policy") ?? "",
+            "media-src 'self' blob: data:",
+          );
         }),
       );
 
@@ -226,5 +230,7 @@ describe("ElectronProtocol", () => {
       "https:",
     ]);
     assert.deepEqual(directives["font-src"], ["'self'", "t3code:", "data:"]);
+    // Synthesized speech plays from blob: URLs; the audio unlock uses a data: clip.
+    assert.deepEqual(directives["media-src"], ["'self'", "blob:", "data:"]);
   });
 });
