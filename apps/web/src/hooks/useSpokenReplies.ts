@@ -51,6 +51,7 @@ export function useSpokenReplies(input: {
     [backendUrl, environmentId],
   );
   const cursorRef = useRef<SpokenReplyCursor | null>(null);
+  const shownThreadKeyRef = useRef<string | null>(null);
   const warnedBackendRef = useRef(false);
   const latestTurn = input.thread?.latestTurn ?? null;
   const messages = input.thread?.messages ?? null;
@@ -93,6 +94,12 @@ export function useSpokenReplies(input: {
   }, [input.pendingApprovals, input.pendingUserInputs, input.threadKey, latestTurn, messages]);
 
   useEffect(() => {
+    // Leaving a thread silences it at once, even when the next thread's
+    // detail has not arrived yet and the policy has nothing to step over.
+    if (shownThreadKeyRef.current !== input.threadKey) {
+      if (shownThreadKeyRef.current !== null) stopSpeaking();
+      shownThreadKeyRef.current = input.threadKey;
+    }
     if (view === null) {
       cursorRef.current = null;
       return;
@@ -109,7 +116,7 @@ export function useSpokenReplies(input: {
       .filter((part) => part.length > 0)
       .join(" ");
     if (text.length > 0) speak(text, { voiceURI, rate, backend, onBackendFailure });
-  }, [backend, enabled, onBackendFailure, rate, view, voiceURI]);
+  }, [backend, enabled, input.threadKey, onBackendFailure, rate, view, voiceURI]);
 
   useEffect(() => {
     if (enabled) {

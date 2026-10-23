@@ -15,6 +15,9 @@ const listeners = new Set<() => void>();
 export function setSpeaking(next: boolean): void {
   if (speaking === next) return;
   speaking = next;
+  // Speech that ends on its own has no source any more; otherwise a message's
+  // button would keep offering Stop for audio that already finished.
+  if (!next) speakingSourceId = null;
   for (const listener of listeners) listener();
 }
 

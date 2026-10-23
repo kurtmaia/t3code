@@ -81,6 +81,9 @@ function silentWavDataUrl(): string {
 export function unlockVoicePlayer(): void {
   const element = getPlayer();
   if (element === null) return;
+  // An element that is playing is already unlocked; swapping its source
+  // would cut the clip short.
+  if (!element.paused) return;
   element.src = silentWavDataUrl();
   void element.play().catch(() => undefined);
 }
