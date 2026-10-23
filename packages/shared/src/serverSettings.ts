@@ -122,6 +122,28 @@ function mergeModelSelectionOptionsById(input: {
   return [...merged.entries()].map(([id, value]) => ({ id, value }));
 }
 
+/**
+ * Clients only ever see a blanked speech key plus a "redacted" marker. A patch
+ * echoing that marker must not overwrite the stored key with the blank, and
+ * the marker itself is never persisted; the server re-derives it on send.
+ */
+function withoutRedactedSpeechKey<P extends { readonly speech?: ServerSettingsPatch["speech"] }>(
+  patch: P,
+): P {
+  const speech = patch.speech;
+  if (speech === undefined) return patch;
+  const { textToSpeechApiKeyRedacted, textToSpeechApiKey, ...rest } = speech;
+  return {
+    ...patch,
+    speech: {
+      ...rest,
+      ...(textToSpeechApiKeyRedacted === true || textToSpeechApiKey === undefined
+        ? {}
+        : { textToSpeechApiKey }),
+    },
+  };
+}
+
 export function applyServerSettingsPatch(
   current: ServerSettings,
   patch: ServerSettingsPatch,
@@ -169,7 +191,7 @@ export function applyServerSettingsPatch(
             },
           }
         : undefined;
-  const next = deepMerge(current, patchForMerge);
+  const next = deepMerge(current, withoutRedactedSpeechKey(patchForMerge));
   const nextWithReplacementsBase = {
     ...next,
     ...(backgroundActivity !== undefined

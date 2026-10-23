@@ -1583,7 +1583,8 @@ function ChatViewContent(props: ChatViewProps) {
   const activeThreadId = activeThread?.id ?? null;
   const activeThreadEnvironmentId = activeThread?.environmentId ?? null;
   const readSelectionAloud = useCallback(
-    ({ quoteText }: { quoteText: string }) => readAloud(activeThreadEnvironmentId, quoteText),
+    ({ messageId, quoteText }: { messageId: string; quoteText: string }) =>
+      readAloud(activeThreadEnvironmentId, quoteText, messageId),
     [activeThreadEnvironmentId],
   );
   const runningTerminalIds = useThreadRunningTerminalIds({
@@ -2284,7 +2285,9 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const isSpeakingReply = useSpokenReplies({
     enabled: spokenRepliesOverride ?? spokenRepliesDefault,
-    thread: activeServerThread,
+    // The loading shell carries no activities; baselining on it would make
+    // every already-pending approval sound new once the detail arrives.
+    thread: serverThread,
     threadKey: activeThreadKey,
     pendingApprovals,
     pendingUserInputs,

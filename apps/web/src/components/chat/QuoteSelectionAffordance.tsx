@@ -136,10 +136,10 @@ export function QuoteSelectionAffordance(props: QuoteSelectionAffordanceProps) {
       {onReadSelection ? (
         <button
           type="button"
-          onPointerDown={(event) => {
-            event.preventDefault();
-            onRead();
-          }}
+          // Keep the selection on press; act on release, which counts as a
+          // user gesture for audio on touch devices where pointerdown does not.
+          onPointerDown={(event) => event.preventDefault()}
+          onPointerUp={onRead}
           className={pillClassName}
         >
           <Volume2Icon className="size-3" />

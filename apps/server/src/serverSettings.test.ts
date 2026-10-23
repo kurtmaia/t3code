@@ -19,6 +19,7 @@ import * as Stream from "effect/Stream";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ServerConfig from "./config.ts";
 import * as ServerSettingsModule from "./serverSettings.ts";
+import { redactServerSettingsForClient } from "./serverSettings.ts";
 
 const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
@@ -751,4 +752,17 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       );
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
+});
+
+it("blanks the speech API key for clients and marks that one is stored", () => {
+  const withKey = redactServerSettingsForClient({
+    ...DEFAULT_SERVER_SETTINGS,
+    speech: { ...DEFAULT_SERVER_SETTINGS.speech, textToSpeechApiKey: "stored-key" },
+  });
+  assert.strictEqual(withKey.speech.textToSpeechApiKey, "");
+  assert.strictEqual(withKey.speech.textToSpeechApiKeyRedacted, true);
+
+  const withoutKey = redactServerSettingsForClient(DEFAULT_SERVER_SETTINGS);
+  assert.strictEqual(withoutKey.speech.textToSpeechApiKey, "");
+  assert.strictEqual("textToSpeechApiKeyRedacted" in withoutKey.speech, false);
 });

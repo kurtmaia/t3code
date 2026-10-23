@@ -14,7 +14,7 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import type { PendingApproval, PendingUserInput } from "../session-logic";
-import { speak, stopSpeaking, useIsSpeaking } from "../speech/speak";
+import { armSpeechOnFirstGesture, speak, stopSpeaking, useIsSpeaking } from "../speech/speak";
 import { useClientSettings, useEnvironmentSettings } from "./useSettings";
 
 const selectVoice = (settings: { spokenRepliesVoice: string | null }) =>
@@ -112,7 +112,11 @@ export function useSpokenReplies(input: {
   }, [backend, enabled, onBackendFailure, rate, view, voiceURI]);
 
   useEffect(() => {
-    if (!enabled) stopSpeaking();
+    if (enabled) {
+      armSpeechOnFirstGesture();
+    } else {
+      stopSpeaking();
+    }
   }, [enabled]);
 
   return useIsSpeaking();

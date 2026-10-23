@@ -41,13 +41,14 @@ export function isThreadSpokenRepliesEnabled(threadRef: ScopedThreadRef): boolea
 /** Per-thread, per-device choice. Turning it on confirms aloud, which also arms audio on iOS. */
 export function setThreadSpokenReplies(threadRef: ScopedThreadRef, enabled: boolean): void {
   useUiStateStore.getState().setThreadSpokenReplies(scopedThreadKey(threadRef), enabled);
+  // Turning off does not touch current speech here: the open thread's hook
+  // stops its own reading when its flag flips, and a thread toggled from the
+  // sidebar must not silence a different one.
   if (enabled) {
     speakCurrentVoice(
       SPOKEN_REPLIES_ON_CONFIRMATION,
       resolveSpeechBackend(threadRef.environmentId),
     );
-  } else {
-    stopSpeaking();
   }
 }
 
@@ -58,10 +59,18 @@ export function toggleThreadSpokenReplies(threadRef: ScopedThreadRef): boolean {
 }
 
 /** Reads one message or passage in full, through the environment's backend when it has one. */
-export function readAloud(environmentId: EnvironmentId | null, markdown: string): void {
+export function readAloud(
+  environmentId: EnvironmentId | null,
+  markdown: string,
+  sourceId: string | null = null,
+): void {
   const { text } = toSpeakableText(markdown, { maxChars: Number.POSITIVE_INFINITY });
   if (text.length === 0) return;
-  speakCurrentVoice(text, environmentId === null ? null : resolveSpeechBackend(environmentId));
+  speakCurrentVoice(
+    text,
+    environmentId === null ? null : resolveSpeechBackend(environmentId),
+    sourceId,
+  );
 }
 
 /**
@@ -72,6 +81,7 @@ export function readAloud(environmentId: EnvironmentId | null, markdown: string)
 export function speakCurrentVoice(
   text: string,
   backend: SpeechBackendTarget | null = resolvePrimarySpeechBackend(),
+  sourceId: string | null = null,
 ): void {
   const settings = getClientSettings();
   unlockVoicePlayer();
@@ -79,6 +89,7 @@ export function speakCurrentVoice(
     voiceURI: settings.spokenRepliesVoice,
     rate: settings.spokenRepliesRate,
     backend,
+    sourceId,
     onBackendFailure: (message) => {
       toastManager.add(
         stackedThreadToast({

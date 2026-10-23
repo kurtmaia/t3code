@@ -55,11 +55,12 @@ System voices are convenient but sound mechanical. For a natural voice, point th
 an OpenAI-compatible text-to-speech server under **Settings** → **General** → **Voice** →
 **Neural voice server**. Self-hosted servers such as Kokoro-FastAPI or Speaches work, and so does
 OpenAI's speech API with an API key. Enter the server's address, for example
-`http://macmini:8890`, pick a voice name the server knows, and press **Test**.
+`http://localhost:8890`, pick a voice name the server knows, and press **Test**.
 
 The server setting belongs to the environment, not the device: every device connected to that
 environment hears the same voice, including a phone on a tunnel, and the address and key never
-leave the server. Replies are rendered a sentence or two at a time, so speech starts about a
+leave the server. Settings edits the environment this device is paired to; a remote environment
+has its own settings file. Replies are rendered a sentence or two at a time, so speech starts about a
 second after the turn finishes. If the server cannot be reached, the reply falls back to the
 system voice and a notice explains why, once per session.
 
@@ -68,5 +69,5 @@ system voice and a notice explains why, once per session.
 Spoken replies use the speech voices built into your browser or the desktop app and need no
 account or network access. They work in the desktop app and in the web app, including on a phone's
 browser. On iPhone and iPad, Safari only allows speech to start from a tap, which is why turning the
-feature on confirms itself out loud, and speech pauses when the screen locks or Safari goes to the
-background. Browsers without speech voices show the setting as unavailable.
+feature on confirms itself out loud. After reloading the page, tap anywhere once before expecting
+a reply to be spoken. Speech pauses when the screen locks or Safari goes to the background. Browsers without speech voices show the setting as unavailable.

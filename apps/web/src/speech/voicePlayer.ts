@@ -15,6 +15,8 @@ export class VoicePlaybackError extends Error {
   constructor(
     message: string,
     readonly playedClips: number,
+    /** The playback this failure belongs to; stale ones must not trigger fallbacks. */
+    readonly generation: number,
     options?: { cause?: unknown },
   ) {
     super(message, options);
@@ -24,6 +26,9 @@ export class VoicePlaybackError extends Error {
 
 let player: HTMLAudioElement | null = null;
 let activeObjectUrl: string | null = null;
+// Resolves the clip currently awaited by playSynthesizedSpeech; stop calls it
+// because pausing an element fires neither "ended" nor "error".
+let settleActiveClip: (() => void) | null = null;
 
 function getPlayer(): HTMLAudioElement | null {
   if (typeof Audio === "undefined") return null;
@@ -88,22 +93,24 @@ function playBytes(element: HTMLAudioElement, bytes: Uint8Array): Promise<void> 
     copy.set(bytes);
     const url = URL.createObjectURL(new Blob([copy.buffer], { type: "audio/wav" }));
     activeObjectUrl = url;
-    const finish = () => {
+    const detach = () => {
       element.removeEventListener("ended", finish);
       element.removeEventListener("error", fail);
-      element.removeEventListener("emptied", finish);
+      if (settleActiveClip === finish) settleActiveClip = null;
+    };
+    const finish = () => {
+      detach();
       resolve();
     };
     const fail = () => {
-      element.removeEventListener("ended", finish);
-      element.removeEventListener("error", fail);
-      element.removeEventListener("emptied", finish);
+      detach();
       reject(new Error("The audio element could not play the clip."));
     };
+    // Not "emptied": swapping src on an element that still holds the previous
+    // clip fires it immediately, which would end every clip after the first.
     element.addEventListener("ended", finish);
     element.addEventListener("error", fail);
-    // stopVoicePlayer() clears the source, which fires "emptied".
-    element.addEventListener("emptied", finish);
+    settleActiveClip = finish;
     element.src = url;
     element.play().catch(fail);
   });
@@ -120,7 +127,11 @@ export async function playSynthesizedSpeech(
 ): Promise<void> {
   const element = getPlayer();
   if (element === null) {
-    throw new VoicePlaybackError("Audio playback is not available here.", 0);
+    throw new VoicePlaybackError(
+      "Audio playback is not available here.",
+      0,
+      nextSpeechGeneration(),
+    );
   }
   const clips = splitUtteranceChunks(text, VOICE_CLIP_MAX_CHARS);
   if (clips.length === 0) return;
@@ -135,7 +146,9 @@ export async function playSynthesizedSpeech(
       try {
         bytes = await pending!;
       } catch (cause) {
-        throw new VoicePlaybackError("The speech backend did not return audio.", played, {
+        // A playback the user already stopped or replaced fails silently.
+        if (!isCurrentSpeechGeneration(batch)) return;
+        throw new VoicePlaybackError("The speech backend did not return audio.", played, batch, {
           cause,
         });
       }
@@ -147,7 +160,8 @@ export async function playSynthesizedSpeech(
       try {
         await playBytes(element, bytes);
       } catch (cause) {
-        throw new VoicePlaybackError("The clip could not be played.", played, { cause });
+        if (!isCurrentSpeechGeneration(batch)) return;
+        throw new VoicePlaybackError("The clip could not be played.", played, batch, { cause });
       }
       if (!isCurrentSpeechGeneration(batch)) return;
       played += 1;
@@ -162,6 +176,7 @@ export async function playSynthesizedSpeech(
 
 /** Stops backend playback without touching the shared speaking flag; `speak.ts` owns that. */
 export function stopVoicePlayer(): void {
+  settleActiveClip?.();
   const element = player;
   if (element === null) return;
   element.pause();

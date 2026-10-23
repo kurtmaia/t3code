@@ -7,6 +7,8 @@ import { useSyncExternalStore } from "react";
  */
 
 let speaking = false;
+/** What is being read, e.g. a message id, so a per-message button can show Stop for itself only. */
+let speakingSourceId: string | null = null;
 let generation = 0;
 const listeners = new Set<() => void>();
 
@@ -18,6 +20,20 @@ export function setSpeaking(next: boolean): void {
 
 export function isSpeaking(): boolean {
   return speaking;
+}
+
+export function setSpeakingSource(sourceId: string | null): void {
+  if (speakingSourceId === sourceId) return;
+  speakingSourceId = sourceId;
+  for (const listener of listeners) listener();
+}
+
+export function getSpeakingSource(): string | null {
+  return speakingSourceId;
+}
+
+export function useSpeakingSource(): string | null {
+  return useSyncExternalStore(subscribeSpeaking, getSpeakingSource, () => null);
 }
 
 export function subscribeSpeaking(listener: () => void): () => void {

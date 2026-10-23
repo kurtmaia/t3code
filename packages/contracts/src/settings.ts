@@ -626,8 +626,9 @@ export type BackgroundActivityOverrides = typeof BackgroundActivityOverrides.Typ
  * as Kokoro-FastAPI, Speaches, or OpenAI. Server-side so every client of the
  * environment, including phones on a tunnel, gets the same voice without
  * holding the backend address or key. An empty URL means clients use their
- * own system voices. The key is stored in plain text like other provider
- * credentials in this file.
+ * own system voices. The key is stored in plain text in the server's settings
+ * file like other provider credentials, and blanked before settings reach any
+ * client.
  */
 export const DEFAULT_TEXT_TO_SPEECH_MODEL = "kokoro";
 export const DEFAULT_TEXT_TO_SPEECH_VOICE = "af_heart";
@@ -640,6 +641,11 @@ export const SpeechSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TEXT_TO_SPEECH_VOICE)),
   ),
   textToSpeechApiKey: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /**
+   * Set on the copy sent to clients when a key is stored: the key itself is
+   * blanked on the wire, and a patch carrying this marker leaves it untouched.
+   */
+  textToSpeechApiKeyRedacted: Schema.optionalKey(Schema.Boolean),
 });
 export type SpeechSettings = typeof SpeechSettings.Type;
 
@@ -918,6 +924,7 @@ export const ServerSettingsPatch = Schema.Struct({
       textToSpeechModel: Schema.optionalKey(TrimmedString),
       textToSpeechVoice: Schema.optionalKey(TrimmedString),
       textToSpeechApiKey: Schema.optionalKey(TrimmedString),
+      textToSpeechApiKeyRedacted: Schema.optionalKey(Schema.Boolean),
     }),
   ),
   providers: Schema.optionalKey(

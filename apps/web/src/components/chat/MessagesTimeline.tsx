@@ -79,7 +79,7 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { shouldAutoExpandChangedFiles } from "./changedFilesPresentation";
 import { MessageCopyButton } from "./MessageCopyButton";
-import { stopSpeaking, useIsSpeaking } from "../../speech/speak";
+import { stopSpeaking, useSpeakingSource } from "../../speech/speak";
 import { readAloud } from "../../speech/spokenReplies";
 import {
   computeStableMessagesTimelineRows,
@@ -1214,7 +1214,7 @@ function AssistantCopyButton({ row }: { row: Extract<TimelineRow, { kind: "messa
 
 function AssistantReadAloudButton({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = useContext(TimelineRowCtx);
-  const speaking = useIsSpeaking();
+  const speaking = useSpeakingSource() === row.message.id;
   const copyState = resolveAssistantMessageCopyState({
     text: row.message.text ?? null,
     showCopyButton: row.showAssistantCopyButton,
@@ -1240,7 +1240,11 @@ function AssistantReadAloudButton({ row }: { row: Extract<TimelineRow, { kind: "
               if (speaking) {
                 stopSpeaking();
               } else {
-                readAloud(ctx.activeThreadEnvironmentId, copyState.text ?? row.message.text ?? "");
+                readAloud(
+                  ctx.activeThreadEnvironmentId,
+                  copyState.text ?? row.message.text ?? "",
+                  row.message.id,
+                );
               }
             }}
           />

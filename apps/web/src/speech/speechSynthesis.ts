@@ -110,6 +110,16 @@ export function speakWithSystemVoice(text: string, options: SystemVoiceOptions):
   return true;
 }
 
+/**
+ * iOS lets a page speak on its own only after speech was started from a tap.
+ * An inaudible utterance spoken inside a gesture is enough.
+ */
+export function unlockSystemVoice(): void {
+  const synth = getSynth();
+  if (synth === null || synth.speaking) return;
+  synth.speak(new SpeechSynthesisUtterance(" "));
+}
+
 /** Silences the system voice without touching the shared speaking flag; `speak.ts` owns that. */
 export function cancelSystemVoice(): void {
   liveUtterances = [];

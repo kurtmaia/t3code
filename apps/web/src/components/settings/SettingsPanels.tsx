@@ -666,7 +666,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       spokenRepliesEnabled: DEFAULT_UNIFIED_SETTINGS.spokenRepliesEnabled,
       spokenRepliesVoice: DEFAULT_UNIFIED_SETTINGS.spokenRepliesVoice,
       spokenRepliesRate: DEFAULT_UNIFIED_SETTINGS.spokenRepliesRate,
-      speech: DEFAULT_UNIFIED_SETTINGS.speech,
+      speech: DEFAULT_SPEECH_SETTINGS_PATCH,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
@@ -1813,6 +1813,15 @@ function LegacyFeaturesSection() {
   );
 }
 
+// The client copy of `speech` may carry the "key saved" marker, which a patch
+// must not echo as a value, so defaults are restated field by field.
+const DEFAULT_SPEECH_SETTINGS_PATCH = {
+  textToSpeechUrl: DEFAULT_UNIFIED_SETTINGS.speech.textToSpeechUrl,
+  textToSpeechModel: DEFAULT_UNIFIED_SETTINGS.speech.textToSpeechModel,
+  textToSpeechVoice: DEFAULT_UNIFIED_SETTINGS.speech.textToSpeechVoice,
+  textToSpeechApiKey: DEFAULT_UNIFIED_SETTINGS.speech.textToSpeechApiKey,
+};
+
 const SPOKEN_REPLIES_RATE_LABELS: Record<SpokenRepliesRate, string> = {
   0.8: "Slower",
   1: "Normal",
@@ -1839,7 +1848,7 @@ function SpokenRepliesSection() {
   );
   const selectedVoice =
     sortedVoices.find((voice) => voice.voiceURI === settings.spokenRepliesVoice) ?? null;
-  const enabled = supported && settings.spokenRepliesEnabled;
+  const enabled = (supported || backendConfigured) && settings.spokenRepliesEnabled;
 
   return (
     <SettingsSection id="voice" title="Voice">
@@ -1848,12 +1857,12 @@ function SpokenRepliesSection() {
         description={
           supported
             ? "Default for threads that have not chosen for themselves: read the final reply aloud when a turn finishes in the open thread, and announce questions and approvals. Turn reading on or off for one thread from its menu. Only this device speaks."
-            : "This browser has no speech voices, so replies cannot be read aloud here."
+            : "This browser has no speech voices. Replies can still be read aloud through a neural voice server."
         }
         control={
           <Switch
             checked={enabled}
-            disabled={!supported}
+            disabled={!supported && !backendConfigured}
             onCheckedChange={(checked) => setSpokenRepliesEnabled(Boolean(checked))}
             aria-label="Read replies aloud"
           />
@@ -1958,7 +1967,7 @@ function SpokenRepliesSection() {
           speechDirty ? (
             <SettingResetButton
               label="neural voice settings"
-              onClick={() => updateSettings({ speech: DEFAULT_UNIFIED_SETTINGS.speech })}
+              onClick={() => updateSettings({ speech: DEFAULT_SPEECH_SETTINGS_PATCH })}
             />
           ) : null
         }
@@ -1967,7 +1976,7 @@ function SpokenRepliesSection() {
             className="w-full sm:w-72"
             value={settings.speech.textToSpeechUrl}
             onCommit={(next) => updateSettings({ speech: { textToSpeechUrl: next.trim() } })}
-            placeholder="http://macmini:8890"
+            placeholder="http://localhost:8890"
             spellCheck={false}
             aria-label="Neural voice server URL"
           />
@@ -2019,14 +2028,28 @@ function SpokenRepliesSection() {
       />
       <SettingsRow
         {...searchableSetting("speech-backend-api-key")}
-        description="Optional. Sent as a bearer token and stored in plain text in the server's settings file."
+        description="Optional. Sent as a bearer token and kept in the server's settings file; it is never sent to clients."
+        resetAction={
+          settings.speech.textToSpeechApiKeyRedacted ? (
+            <SettingResetButton
+              label="API key"
+              onClick={() => updateSettings({ speech: { textToSpeechApiKey: "" } })}
+            />
+          ) : null
+        }
         control={
           <DraftInput
             className="w-full sm:w-72"
             type="password"
-            value={settings.speech.textToSpeechApiKey}
-            onCommit={(next) => updateSettings({ speech: { textToSpeechApiKey: next.trim() } })}
-            placeholder="Optional"
+            // Clients only receive a blank plus the "saved" marker, never the key.
+            value=""
+            onCommit={(next) => {
+              const key = next.trim();
+              if (key.length > 0) updateSettings({ speech: { textToSpeechApiKey: key } });
+            }}
+            placeholder={
+              settings.speech.textToSpeechApiKeyRedacted ? "Saved. Type to replace." : "Optional"
+            }
             spellCheck={false}
             autoComplete="off"
             disabled={!backendConfigured}
