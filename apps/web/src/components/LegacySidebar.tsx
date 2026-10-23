@@ -203,6 +203,7 @@ import {
   sortProjectsForSidebar,
   useThreadJumpHintVisibility,
   ThreadStatusPill,
+  hiddenThreadsNeedAttention,
 } from "./Sidebar.logic";
 import { sortThreads } from "../lib/threadSort";
 import { cn } from "~/lib/utils";
@@ -229,7 +230,10 @@ import {
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
 import { SidebarDraftBlock } from "./sidebar/SidebarDraftBlock";
-import { SidebarEnvironmentHeader } from "./sidebar/SidebarEnvironmentHeader";
+import {
+  SidebarEnvironmentHeader,
+  useCollapsedEnvironments,
+} from "./sidebar/SidebarEnvironmentHeader";
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
   created_at: "Created at",
@@ -1211,6 +1215,8 @@ interface SidebarProjectItemProps {
   suppressProjectClickForContextMenuRef: React.RefObject<boolean>;
   isManualProjectSorting: boolean;
   dragHandleProps: SortableProjectHandleProps | null;
+  /** Render as a collapsed project regardless of the user's choice: only the open thread shows. */
+  forceCollapsed?: boolean;
 }
 
 const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjectItemProps) {
@@ -1345,7 +1351,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const projectThreads = sidebarThreads;
   const projectPreferenceKeys = useMemo(() => projectExpansionPreferenceKeys(project), [project]);
   const projectExpanded = useUiStateStore((state) =>
-    resolveProjectExpanded(state.projectExpandedById, projectPreferenceKeys),
+    props.forceCollapsed === true
+      ? false
+      : resolveProjectExpanded(state.projectExpandedById, projectPreferenceKeys),
   );
   const threadLastVisitedAts = useUiStateStore(
     useShallow((state) =>
@@ -1797,9 +1805,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           label: string,
           options?: {
             destructive?: boolean;
+            separatorBefore?: boolean;
             isDisabled?: (member: SidebarProjectGroupMember) => boolean;
           },
         ): ContextMenuItem<string> => {
+          const separator = options?.separatorBefore ? { separatorBefore: true } : {};
           if (project.memberProjects.length === 1) {
             const singleMember = project.memberProjects[0]!;
             return {
@@ -1809,12 +1819,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               }),
               label,
               ...(action === "delete" ? { icon: "trash" } : {}),
+              ...separator,
             };
           }
 
           return {
             id: `${action}:submenu`,
             label,
+            ...separator,
             ...(action === "delete" ? { icon: "trash" } : {}),
             children: project.memberProjects.map((member) =>
               makeLeaf(action, member, {
@@ -1825,9 +1837,26 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           };
         };
 
+        // Any member's physical key resolves to the settings page's group,
+        // whether or not this sidebar split the project per environment.
+        const settingsProjectKey = project.memberProjects[0]?.physicalProjectKey ?? null;
+        if (settingsProjectKey) {
+          actionHandlers.set("settings", () => {
+            if (isMobile) {
+              setOpenMobile(false);
+            }
+            void router.navigate({
+              to: "/projects/$projectKey",
+              params: { projectKey: settingsProjectKey },
+            });
+          });
+        }
         const clicked = await api.contextMenu.show(
           [
-            buildTargetedItem("rename", "Rename"),
+            ...(settingsProjectKey
+              ? [{ id: "settings", label: "Project settings", icon: "settings" }]
+              : []),
+            buildTargetedItem("rename", "Rename", { separatorBefore: settingsProjectKey !== null }),
             buildTargetedItem("grouping", "Group into..."),
             buildTargetedItem("copy-path", "Copy Path"),
             buildTargetedItem("delete", "Remove", {
@@ -1850,10 +1879,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [
       copyPathToClipboard,
       handleRemoveProject,
+      isMobile,
       openProjectGroupingDialog,
       openProjectRenameDialog,
       project.groupedProjectCount,
       project.memberProjects,
+      router,
+      setOpenMobile,
       suppressProjectClickForContextMenuRef,
     ],
   );
@@ -3025,6 +3057,13 @@ interface SidebarProjectsContentProps {
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
   projectSections: readonly SidebarProjectSection[];
+  collapsedEnvironmentIds: ReadonlySet<string>;
+  toggleEnvironmentCollapsed: (environmentId: string) => void;
+  /** Per environment section: thread count and whether a hidden row needs a human. */
+  environmentSectionMeta: ReadonlyMap<
+    string,
+    { readonly count: number; readonly attention: boolean }
+  >;
   draftBlock: React.ReactNode;
   expandedThreadListsByProject: ReadonlySet<string>;
   activeRouteProjectKey: string | null;
@@ -3068,6 +3107,9 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     archiveThread,
     deleteThread,
     projectSections,
+    collapsedEnvironmentIds,
+    toggleEnvironmentCollapsed,
+    environmentSectionMeta,
     draftBlock,
     expandedThreadListsByProject,
     activeRouteProjectKey,
@@ -3085,6 +3127,40 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     attachProjectListAutoAnimateRef,
     projectsLength,
   } = props;
+  // The open thread keeps a row inside a collapsed environment: its project
+  // renders as collapsed, which the project item already reduces to that one
+  // pinned thread.
+  const renderCollapsedSectionPin = (section: SidebarProjectSection) => {
+    const project =
+      activeRouteProjectKey === null
+        ? undefined
+        : section.projects.find((candidate) => candidate.projectKey === activeRouteProjectKey);
+    if (project === undefined) return null;
+    return (
+      <SidebarMenu>
+        <SidebarProjectListRow
+          project={project}
+          forceCollapsed
+          isThreadListExpanded={false}
+          activeRouteThreadKey={routeThreadKey}
+          openPullRequestsInRightPanel={openPullRequestsInRightPanel}
+          newThreadShortcutLabel={newThreadShortcutLabel}
+          handleNewThread={handleNewThread}
+          archiveThread={archiveThread}
+          deleteThread={deleteThread}
+          threadJumpLabelByKey={threadJumpLabelByKey}
+          attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
+          expandThreadListForProject={expandThreadListForProject}
+          collapseThreadListForProject={collapseThreadListForProject}
+          dragInProgressRef={dragInProgressRef}
+          suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
+          suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
+          isManualProjectSorting={isManualProjectSorting}
+          dragHandleProps={null}
+        />
+      </SidebarMenu>
+    );
+  };
 
   const handleProjectSortOrderChange = useCallback(
     (sortOrder: SidebarProjectSortOrder) => {
@@ -3208,47 +3284,58 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                     <SidebarEnvironmentHeader
                       label={section.header.label}
                       kind={section.header.kind}
+                      collapsed={collapsedEnvironmentIds.has(section.key)}
+                      count={environmentSectionMeta.get(section.key)?.count ?? 0}
+                      attention={environmentSectionMeta.get(section.key)?.attention ?? false}
+                      onToggle={() => toggleEnvironmentCollapsed(section.key)}
                     />
                   </div>
                 ) : null}
-                <SidebarMenu>
-                  <SortableContext
-                    items={section.projects.map((project) => project.projectKey)}
-                    strategy={verticalListSortingStrategy}
-                  >
-                    {section.projects.map((project) => (
-                      <SortableProjectItem key={project.projectKey} projectId={project.projectKey}>
-                        {(dragHandleProps) => (
-                          <SidebarProjectItem
-                            project={project}
-                            isThreadListExpanded={expandedThreadListsByProject.has(
-                              project.projectKey,
-                            )}
-                            activeRouteThreadKey={
-                              activeRouteProjectKey === project.projectKey ? routeThreadKey : null
-                            }
-                            openPullRequestsInRightPanel={openPullRequestsInRightPanel}
-                            newThreadShortcutLabel={newThreadShortcutLabel}
-                            handleNewThread={handleNewThread}
-                            archiveThread={archiveThread}
-                            deleteThread={deleteThread}
-                            threadJumpLabelByKey={threadJumpLabelByKey}
-                            attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
-                            expandThreadListForProject={expandThreadListForProject}
-                            collapseThreadListForProject={collapseThreadListForProject}
-                            dragInProgressRef={dragInProgressRef}
-                            suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
-                            suppressProjectClickForContextMenuRef={
-                              suppressProjectClickForContextMenuRef
-                            }
-                            isManualProjectSorting={isManualProjectSorting}
-                            dragHandleProps={dragHandleProps}
-                          />
-                        )}
-                      </SortableProjectItem>
-                    ))}
-                  </SortableContext>
-                </SidebarMenu>
+                {collapsedEnvironmentIds.has(section.key) ? (
+                  renderCollapsedSectionPin(section)
+                ) : (
+                  <SidebarMenu>
+                    <SortableContext
+                      items={section.projects.map((project) => project.projectKey)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      {section.projects.map((project) => (
+                        <SortableProjectItem
+                          key={project.projectKey}
+                          projectId={project.projectKey}
+                        >
+                          {(dragHandleProps) => (
+                            <SidebarProjectItem
+                              project={project}
+                              isThreadListExpanded={expandedThreadListsByProject.has(
+                                project.projectKey,
+                              )}
+                              activeRouteThreadKey={
+                                activeRouteProjectKey === project.projectKey ? routeThreadKey : null
+                              }
+                              openPullRequestsInRightPanel={openPullRequestsInRightPanel}
+                              newThreadShortcutLabel={newThreadShortcutLabel}
+                              handleNewThread={handleNewThread}
+                              archiveThread={archiveThread}
+                              deleteThread={deleteThread}
+                              threadJumpLabelByKey={threadJumpLabelByKey}
+                              attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
+                              expandThreadListForProject={expandThreadListForProject}
+                              collapseThreadListForProject={collapseThreadListForProject}
+                              dragInProgressRef={dragInProgressRef}
+                              suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
+                              suppressProjectClickForContextMenuRef={
+                                suppressProjectClickForContextMenuRef
+                              }
+                              isManualProjectSorting={isManualProjectSorting}
+                              dragHandleProps={dragHandleProps}
+                            />
+                          )}
+                        </SortableProjectItem>
+                      ))}
+                    </SortableContext>
+                  </SidebarMenu>
+                )}
               </Fragment>
             ))}
           </DndContext>
@@ -3260,35 +3347,43 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                   <SidebarEnvironmentHeader
                     label={section.header.label}
                     kind={section.header.kind}
+                    collapsed={collapsedEnvironmentIds.has(section.key)}
+                    count={environmentSectionMeta.get(section.key)?.count ?? 0}
+                    attention={environmentSectionMeta.get(section.key)?.attention ?? false}
+                    onToggle={() => toggleEnvironmentCollapsed(section.key)}
                   />
                 </div>
               ) : null}
-              <SidebarMenu ref={attachProjectListAutoAnimateRef}>
-                {section.projects.map((project) => (
-                  <SidebarProjectListRow
-                    key={project.projectKey}
-                    project={project}
-                    isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
-                    activeRouteThreadKey={
-                      activeRouteProjectKey === project.projectKey ? routeThreadKey : null
-                    }
-                    openPullRequestsInRightPanel={openPullRequestsInRightPanel}
-                    newThreadShortcutLabel={newThreadShortcutLabel}
-                    handleNewThread={handleNewThread}
-                    archiveThread={archiveThread}
-                    deleteThread={deleteThread}
-                    threadJumpLabelByKey={threadJumpLabelByKey}
-                    attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
-                    expandThreadListForProject={expandThreadListForProject}
-                    collapseThreadListForProject={collapseThreadListForProject}
-                    dragInProgressRef={dragInProgressRef}
-                    suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
-                    suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
-                    isManualProjectSorting={isManualProjectSorting}
-                    dragHandleProps={null}
-                  />
-                ))}
-              </SidebarMenu>
+              {collapsedEnvironmentIds.has(section.key) ? (
+                renderCollapsedSectionPin(section)
+              ) : (
+                <SidebarMenu ref={attachProjectListAutoAnimateRef}>
+                  {section.projects.map((project) => (
+                    <SidebarProjectListRow
+                      key={project.projectKey}
+                      project={project}
+                      isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
+                      activeRouteThreadKey={
+                        activeRouteProjectKey === project.projectKey ? routeThreadKey : null
+                      }
+                      openPullRequestsInRightPanel={openPullRequestsInRightPanel}
+                      newThreadShortcutLabel={newThreadShortcutLabel}
+                      handleNewThread={handleNewThread}
+                      archiveThread={archiveThread}
+                      deleteThread={deleteThread}
+                      threadJumpLabelByKey={threadJumpLabelByKey}
+                      attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
+                      expandThreadListForProject={expandThreadListForProject}
+                      collapseThreadListForProject={collapseThreadListForProject}
+                      dragInProgressRef={dragInProgressRef}
+                      suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
+                      suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
+                      isManualProjectSorting={isManualProjectSorting}
+                      dragHandleProps={null}
+                    />
+                  ))}
+                </SidebarMenu>
+              )}
             </Fragment>
           ))
         )}
@@ -3681,16 +3776,58 @@ export default function LegacySidebar() {
     ),
     [draftProjectMaps, navigateToDraft, routeDraftId],
   );
+  const { collapsedEnvironmentIds, toggleEnvironmentCollapsed } = useCollapsedEnvironments();
+  const threadLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
+  // What a collapsed header has to say for its hidden rows: how many threads,
+  // and whether one of them needs a human.
+  const environmentSectionMeta = useMemo(
+    () =>
+      new Map(
+        projectSections
+          // Only collapsed headers show a count or a dot, so expanded sections
+          // cost nothing here and do not churn the map on every visit.
+          .filter((section) => section.header && collapsedEnvironmentIds.has(section.key))
+          .map((section) => {
+            const threads = section.projects.flatMap((project) =>
+              (threadsByProjectKey.get(project.projectKey) ?? []).filter(
+                (thread) => thread.archivedAt === null,
+              ),
+            );
+            return [
+              section.key,
+              {
+                count: threads.length,
+                attention: hiddenThreadsNeedAttention(
+                  threads,
+                  (thread) =>
+                    threadLastVisitedAtById[
+                      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
+                    ],
+                ),
+              },
+            ] as const;
+          }),
+      ),
+    [collapsedEnvironmentIds, projectSections, threadLastVisitedAtById, threadsByProjectKey],
+  );
   // Section order, flattened: thread jump labels and traversal follow what
-  // the user sees.
+  // the user sees. A collapsed section contributes only the open thread's
+  // project, rendered as collapsed so just that thread is reachable.
   const sortedProjects = useMemo(
-    () => projectSections.flatMap((section) => section.projects),
-    [projectSections],
+    () =>
+      projectSections.flatMap((section) =>
+        section.header && collapsedEnvironmentIds.has(section.key)
+          ? section.projects
+              .filter((project) => project.projectKey === activeRouteProjectKey)
+              .map((project) => ({ project, collapsedSection: true }))
+          : section.projects.map((project) => ({ project, collapsedSection: false })),
+      ),
+    [activeRouteProjectKey, collapsedEnvironmentIds, projectSections],
   );
   const isManualProjectSorting = sidebarProjectSortOrder === "manual";
   const visibleSidebarThreadKeys = useMemo(
     () =>
-      sortedProjects.flatMap((project) => {
+      sortedProjects.flatMap(({ project, collapsedSection }) => {
         const projectThreads = nestSubThreadsInSidebarList(
           sortThreads(
             (threadsByProjectKey.get(project.projectKey) ?? []).filter(
@@ -3699,10 +3836,9 @@ export default function LegacySidebar() {
             sidebarThreadSortOrder,
           ),
         ).ordered;
-        const projectExpanded = resolveProjectExpanded(
-          projectExpandedById,
-          projectExpansionPreferenceKeys(project),
-        );
+        const projectExpanded =
+          !collapsedSection &&
+          resolveProjectExpanded(projectExpandedById, projectExpansionPreferenceKeys(project));
         const activeThreadKey = routeThreadKey ?? undefined;
         const pinnedCollapsedThread =
           !projectExpanded && activeThreadKey
@@ -4038,6 +4174,9 @@ export default function LegacySidebar() {
         archiveThread={archiveThread}
         deleteThread={deleteThread}
         projectSections={projectSections}
+        collapsedEnvironmentIds={collapsedEnvironmentIds}
+        toggleEnvironmentCollapsed={toggleEnvironmentCollapsed}
+        environmentSectionMeta={environmentSectionMeta}
         draftBlock={draftBlock}
         expandedThreadListsByProject={expandedThreadListsByProject}
         activeRouteProjectKey={activeRouteProjectKey}

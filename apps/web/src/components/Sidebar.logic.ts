@@ -500,6 +500,21 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   return "ready";
 }
 
+/**
+ * Whether rows hidden behind a collapsed group need a human: waiting on
+ * approval or input, failed, or finished since the user last looked. The
+ * group's header shows a dot so collapsing never hides an open question.
+ */
+export function hiddenThreadsNeedAttention<
+  T extends SidebarThreadStatusInput & Omit<ThreadStatusInput, "lastVisitedAt">,
+>(threads: ReadonlyArray<T>, lastVisitedAtFor: (thread: T) => string | undefined): boolean {
+  return threads.some((thread) => {
+    const status = resolveSidebarThreadStatus(thread);
+    if (status === "approval" || status === "input" || status === "failed") return true;
+    return hasUnseenCompletion({ ...thread, lastVisitedAt: lastVisitedAtFor(thread) });
+  });
+}
+
 /** NaN-safe Date.parse for sort comparators: a malformed timestamp must not
     poison the whole ordering, so it sinks to the epoch instead. */
 export function parseTimestampMs(isoDate: string): number {

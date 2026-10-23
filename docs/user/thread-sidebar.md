@@ -22,12 +22,19 @@ section, so its threads never mix. Pinned threads, unsent drafts, and the Snooze
 shelves stay above or below the sections, because they are about what needs attention rather than
 where it runs. With a single environment, nothing changes.
 
+Click an environment's header to collapse it; click again to bring it back. A collapsed section
+shows only its name and a thread count, and its rows are skipped by the thread jump shortcuts. The
+thread you have open stays visible even when its environment is collapsed, a dot on the header means
+a hidden thread is waiting on you or finished since you last looked, and search still finds threads in
+collapsed environments. The choice is remembered on this device and applies to both sidebar layouts.
+
 Unsent drafts with typed text or attachments appear at the top of the sidebar in both the default
 and the legacy project-grouped layout. Click one to pick it back up, or hover and choose
 **Discard draft**.
 
 The legacy project-grouped layout shows the same thread details on hover and offers the same
-thread menu, except for pinning, settling, and snoozing, which need the default layout.
+thread menu, except for pinning, settling, and snoozing, which need the default layout. Right-click
+a project header and choose **Project settings** to open that project's settings.
 
 ## Environment artwork
 
