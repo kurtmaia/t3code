@@ -21,6 +21,7 @@ import {
 import { type ComposerImageAttachment, useComposerDraftStore } from "~/composerDraftStore";
 import { previewAnnotationScreenshotFile } from "~/lib/previewAnnotation";
 import { ensureLocalApi } from "~/localApi";
+import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import {
   rememberPreviewUrl,
   updatePreviewServerSnapshot,
@@ -314,20 +315,7 @@ export function PreviewView({
             let toastId: ReturnType<typeof toastManager.add>;
 
             const copyPath = () => {
-              if (!navigator.clipboard?.writeText) {
-                toastManager.update(
-                  toastId,
-                  stackedThreadToast({
-                    type: "error",
-                    title: "Unable to copy recording path",
-                    description: "Clipboard API unavailable.",
-                    actionProps: revealAction,
-                  }),
-                );
-                return;
-              }
-
-              void navigator.clipboard.writeText(artifact.path).then(
+              void writeTextToClipboard(artifact.path, "recording path").then(
                 () => {
                   pathCopied = true;
                   updateRecordingToast();
@@ -455,16 +443,7 @@ export function PreviewView({
           };
 
           const copyPath = () => {
-            if (!navigator.clipboard?.writeText) {
-              updateScreenshotToast(
-                "error",
-                "Unable to copy screenshot path",
-                "Clipboard API unavailable.",
-              );
-              return;
-            }
-
-            void navigator.clipboard.writeText(artifact.path).then(
+            void writeTextToClipboard(artifact.path, "screenshot path").then(
               () => {
                 pathCopied = true;
                 updateScreenshotToast();

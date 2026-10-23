@@ -54,6 +54,9 @@ available. You can set another endpoint as the default from the expanded endpoin
 - HTTPS/WSS-compatible endpoints work from `https://app.t3.codes`, but are not made the default
   automatically.
 - Non-loopback HTTP endpoints are useful for direct LAN pairing.
+- On a plain `http://` connection the browser has no clipboard API. Copy buttons still work when
+  you tap them directly, through a legacy copy command; copy actions inside right-click menus can
+  fail there, especially on iOS. Use an HTTPS endpoint if you copy a lot from a phone.
 - Loopback-only endpoints are not useful for another device unless that device is the same machine.
 
 If the copied link points directly at `http://192.168.x.y:3773`, open it from a client that can reach that LAN address. If it points at `https://app.t3.codes/pair?...`, the hosted web app will save the environment and connect directly to the backend URL in the link.

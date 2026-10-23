@@ -36,7 +36,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
-import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { isClipboardWriteSupported, useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
@@ -601,10 +601,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   // Never render a QR for a loopback URL, even in the manual-copy fallback.
   const isRevealValueQrShareable =
     endpointCopyOptions.find((option) => option.url === revealValue)?.qrShareable ?? true;
-  const canCopyToClipboard =
-    typeof window !== "undefined" &&
-    window.isSecureContext &&
-    navigator.clipboard?.writeText != null;
+  const canCopyToClipboard = isClipboardWriteSupported();
 
   const { copyToClipboard } = useCopyToClipboard<{
     value: string;
