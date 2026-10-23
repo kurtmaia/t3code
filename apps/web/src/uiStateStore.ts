@@ -27,6 +27,7 @@ export interface PersistedUiState {
   defaultAdvertisedEndpointKey?: string | null;
   threadChangedFilesExpansionVersion?: typeof THREAD_CHANGED_FILES_EXPANSION_VERSION;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
+  threadSpokenRepliesById?: Record<string, boolean>;
 }
 
 export interface UiProjectState {
@@ -37,6 +38,8 @@ export interface UiProjectState {
 export interface UiThreadState {
   threadLastVisitedAtById: Record<string, string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
+  /** Per-thread, per-device choice to read replies aloud; absent means "use the device default". */
+  threadSpokenRepliesById: Record<string, boolean>;
 }
 
 export interface UiEndpointState {
@@ -50,6 +53,7 @@ const initialState: UiState = {
   projectOrder: [],
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
+  threadSpokenRepliesById: {},
   defaultAdvertisedEndpointKey: null,
 };
 
@@ -130,6 +134,7 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
         ? sanitizePersistedThreadChangedFilesExpanded(parsed.threadChangedFilesExpandedById)
         : {},
+    threadSpokenRepliesById: sanitizeBooleanRecord(parsed.threadSpokenRepliesById),
     defaultAdvertisedEndpointKey:
       typeof parsed.defaultAdvertisedEndpointKey === "string" &&
       parsed.defaultAdvertisedEndpointKey.length > 0
@@ -207,6 +212,7 @@ export function persistState(state: UiState): void {
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
         threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
+        threadSpokenRepliesById: state.threadSpokenRepliesById,
       } satisfies PersistedUiState),
     );
     if (!legacyKeysCleanedUp) {
@@ -291,6 +297,25 @@ export function setThreadChangedFilesExpanded(
       },
     },
   };
+}
+
+/** `null` forgets the thread's own choice so the device default applies again. */
+export function setThreadSpokenReplies(
+  state: UiState,
+  threadKey: string,
+  enabled: boolean | null,
+): UiState {
+  const current = state.threadSpokenRepliesById[threadKey];
+  if ((current ?? null) === enabled) {
+    return state;
+  }
+  const next = { ...state.threadSpokenRepliesById };
+  if (enabled === null) {
+    delete next[threadKey];
+  } else {
+    next[threadKey] = enabled;
+  }
+  return { ...state, threadSpokenRepliesById: next };
 }
 
 export function setDefaultAdvertisedEndpointKey(state: UiState, key: string | null): UiState {
@@ -385,6 +410,7 @@ interface UiStateStore extends UiState {
   markThreadVisited: (threadId: string, visitedAt: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
+  setThreadSpokenReplies: (threadKey: string, enabled: boolean | null) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
   reorderProjects: (
@@ -402,6 +428,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => markThreadUnread(state, threadId, latestTurnCompletedAt)),
   setThreadChangedFilesExpanded: (threadId, turnId, expanded) =>
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
+  setThreadSpokenReplies: (threadKey, enabled) =>
+    set((state) => setThreadSpokenReplies(state, threadKey, enabled)),
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
   setProjectExpanded: (projectIds, expanded) =>

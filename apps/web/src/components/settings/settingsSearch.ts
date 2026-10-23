@@ -106,6 +106,41 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "spoken-replies",
+    title: "Read replies aloud by default",
+    to: "/settings/general",
+  },
+  {
+    id: "spoken-replies-voice",
+    title: "Voice",
+    to: "/settings/general",
+  },
+  {
+    id: "spoken-replies-rate",
+    title: "Speaking rate",
+    to: "/settings/general",
+  },
+  {
+    id: "speech-backend-url",
+    title: "Neural voice server",
+    to: "/settings/general",
+  },
+  {
+    id: "speech-backend-voice",
+    title: "Neural voice",
+    to: "/settings/general",
+  },
+  {
+    id: "speech-backend-model",
+    title: "Neural voice model",
+    to: "/settings/general",
+  },
+  {
+    id: "speech-backend-api-key",
+    title: "Neural voice API key",
+    to: "/settings/general",
+  },
+  {
     id: "auto-settle-inactive-threads",
     title: "Auto-settle inactive threads",
     to: "/settings/general",

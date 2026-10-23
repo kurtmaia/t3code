@@ -81,6 +81,23 @@ A single user-to-assistant work cycle inside a thread. It starts with user input
 
 A user-visible log item attached to a thread. In [the contracts][1], activities cover important non-message events like approvals, tool actions, and failures. They are projected into thread state in [projector.ts][4].
 
+#### Spoken reply
+
+A client-side reading of a turn's final assistant message through the device's own speech voices.
+The policy in [`packages/client-runtime/src/speech`](../../packages/client-runtime/src/speech/) is a
+pure step over a per-thread cursor: it speaks a turn once its latest-turn state reaches `completed`
+and the message has stopped streaming, announces each pending approval or user-input request the
+first time it appears, and interrupts when a new turn starts or the shown thread changes. Opening a
+thread baselines the cursor so history is never read back. The setting is client-local, so only the
+opted-in device speaks; the web app renders the state as a **Reading aloud** composer banner.
+
+#### Speech backend
+
+An OpenAI-compatible text-to-speech server (`/v1/audio/speech`) configured per environment in
+`ServerSettings.speech`. The server proxies synthesis through `POST /api/speech/synthesize` so
+clients never hold the backend address or key; with no backend configured, clients use their own
+system voices. See [speech.md](./speech.md).
+
 ### Orchestration
 
 Orchestration is the server-side domain layer that turns runtime activity into stable app state. The main entry point is [OrchestrationEngine.ts][7], with core logic in [decider.ts][8] and [projector.ts][4].

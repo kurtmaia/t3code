@@ -15,6 +15,8 @@ import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { resolveShortcutCommand } from "../keybindings";
+import { stopSpeaking } from "../speech/speak";
+import { toggleSpokenReplies, toggleThreadSpokenReplies } from "../speech/spokenReplies";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
@@ -105,6 +107,38 @@ function ChatRouteGlobalShortcuts() {
           defaultProjectRef,
           handleNewThread,
         });
+        return;
+      }
+
+      if (command === "voice.toggleSpokenReplies") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (routeThreadRef) {
+          const enabled = toggleThreadSpokenReplies(routeThreadRef);
+          toastManager.add(
+            stackedThreadToast({
+              type: "info",
+              title: enabled ? "Reading this thread aloud" : "Stopped reading this thread aloud",
+              description: "Only on this device. Other threads follow the default in Settings.",
+            }),
+          );
+          return;
+        }
+        const enabled = toggleSpokenReplies();
+        toastManager.add(
+          stackedThreadToast({
+            type: "info",
+            title: enabled ? "Spoken replies on by default" : "Spoken replies off by default",
+            description: "Threads with their own choice keep it.",
+          }),
+        );
+        return;
+      }
+
+      if (command === "voice.stopSpeaking") {
+        event.preventDefault();
+        event.stopPropagation();
+        stopSpeaking();
         return;
       }
 

@@ -21,6 +21,7 @@ const NOOP_OPEN_AGENTS = () => {};
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import {
   createContext,
+  useContext,
   Fragment,
   memo,
   use,
@@ -66,6 +67,8 @@ import {
   SquarePenIcon,
   TerminalIcon,
   Undo2Icon,
+  Volume2Icon,
+  VolumeXIcon,
   WrenchIcon,
   XIcon,
   ZapIcon,
@@ -76,6 +79,8 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { shouldAutoExpandChangedFiles } from "./changedFilesPresentation";
 import { MessageCopyButton } from "./MessageCopyButton";
+import { stopSpeaking, useIsSpeaking } from "../../speech/speak";
+import { readAloud } from "../../speech/spokenReplies";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
@@ -1144,6 +1149,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         {row.showAssistantMeta ? (
           <div className="mt-1.5 flex items-center gap-2 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant:opacity-100">
             <AssistantCopyButton row={row} />
+            <AssistantReadAloudButton row={row} />
             {!row.message.streaming && (
               <Tooltip>
                 <TooltipTrigger
@@ -1204,6 +1210,49 @@ function AssistantCopyButton({ row }: { row: Extract<TimelineRow, { kind: "messa
   }
 
   return <MessageCopyButton text={assistantCopyState.text ?? ""} variant="ghost" />;
+}
+
+function AssistantReadAloudButton({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+  const ctx = useContext(TimelineRowCtx);
+  const speaking = useIsSpeaking();
+  const copyState = resolveAssistantMessageCopyState({
+    text: row.message.text ?? null,
+    showCopyButton: row.showAssistantCopyButton,
+    streaming: row.assistantCopyStreaming,
+  });
+
+  if (!copyState.visible) {
+    return null;
+  }
+
+  const label = speaking ? "Stop reading" : "Read aloud";
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            aria-label={label}
+            type="button"
+            size="xs"
+            variant="ghost"
+            className="text-muted-foreground hover:text-foreground"
+            onClick={() => {
+              if (speaking) {
+                stopSpeaking();
+              } else {
+                readAloud(ctx.activeThreadEnvironmentId, copyState.text ?? row.message.text ?? "");
+              }
+            }}
+          />
+        }
+      >
+        {speaking ? <VolumeXIcon className="size-3" /> : <Volume2Icon className="size-3" />}
+      </TooltipTrigger>
+      <TooltipPopup>
+        <p>{label}</p>
+      </TooltipPopup>
+    </Tooltip>
+  );
 }
 
 function ProposedPlanTimelineRow({

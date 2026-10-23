@@ -349,3 +349,54 @@ describe("ServerSettingsPatch string normalization", () => {
     expect(encoded.providers?.codex?.launchArgs).toBe("--strict-config");
   });
 });
+
+describe("ClientSettings spoken replies", () => {
+  it("defaults to off with the system voice at normal rate", () => {
+    const decoded = decodeClientSettings({});
+    expect(decoded.spokenRepliesEnabled).toBe(false);
+    expect(decoded.spokenRepliesVoice).toBeNull();
+    expect(decoded.spokenRepliesRate).toBe(1);
+  });
+
+  it("keeps a persisted voice and rate", () => {
+    const decoded = decodeClientSettings({
+      spokenRepliesEnabled: true,
+      spokenRepliesVoice: "com.apple.voice.compact.en-US.Samantha",
+      spokenRepliesRate: 1.25,
+    });
+    expect(decoded.spokenRepliesEnabled).toBe(true);
+    expect(decoded.spokenRepliesVoice).toBe("com.apple.voice.compact.en-US.Samantha");
+    expect(decoded.spokenRepliesRate).toBe(1.25);
+  });
+
+  it("rejects rates outside the offered steps", () => {
+    expect(() => decodeClientSettings({ spokenRepliesRate: 3 })).toThrow();
+  });
+
+  it("patches each spoken reply key independently", () => {
+    expect(decodeClientSettingsPatch({ spokenRepliesVoice: null })).toEqual({
+      spokenRepliesVoice: null,
+    });
+    expect(decodeClientSettingsPatch({ spokenRepliesEnabled: true })).toEqual({
+      spokenRepliesEnabled: true,
+    });
+  });
+});
+
+describe("ServerSettings speech backend", () => {
+  it("defaults to no backend with the Kokoro model and voice", () => {
+    const decoded = decodeServerSettings({});
+    expect(decoded.speech).toEqual({
+      textToSpeechUrl: "",
+      textToSpeechModel: "kokoro",
+      textToSpeechVoice: "af_heart",
+      textToSpeechApiKey: "",
+    });
+  });
+
+  it("patches a single speech field", () => {
+    expect(decodeServerSettingsPatch({ speech: { textToSpeechUrl: "http://mini:8890" } })).toEqual({
+      speech: { textToSpeechUrl: "http://mini:8890" },
+    });
+  });
+});

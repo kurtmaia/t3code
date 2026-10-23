@@ -5,6 +5,7 @@ import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
 import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
+import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 import * as HttpServerRespondable from "effect/unstable/http/HttpServerRespondable";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
@@ -26,6 +27,12 @@ import {
 } from "./auth.ts";
 import { AuthSessionId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import {
+  SPEECH_AUDIO_CONTENT_TYPE,
+  SpeechBackendError,
+  SpeechBackendNotConfiguredError,
+  SpeechSynthesizeInput,
+} from "./speech.ts";
 import {
   ClientOrchestrationCommand,
   DispatchResult,
@@ -546,6 +553,22 @@ export class EnvironmentPullRequestsHttpApi extends HttpApiGroup.make("pullReque
   }).middleware(EnvironmentAuthenticatedAuth),
 ) {}
 
+/** Audio is binary and can be large, so it streams over HTTP like the diff payloads. */
+export class EnvironmentSpeechHttpApi extends HttpApiGroup.make("speech").add(
+  HttpApiEndpoint.post("synthesize", "/api/speech/synthesize", {
+    headers: OptionalBearerHeaders,
+    payload: SpeechSynthesizeInput,
+    success: HttpApiSchema.StreamUint8Array({ contentType: SPEECH_AUDIO_CONTENT_TYPE }),
+    error: [
+      SpeechBackendNotConfiguredError,
+      SpeechBackendError,
+      EnvironmentAuthInvalidError,
+      EnvironmentScopeRequiredError,
+      EnvironmentInternalError,
+    ],
+  }).middleware(EnvironmentAuthenticatedAuth),
+) {}
+
 export class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
   .add(
     HttpApiEndpoint.post("linkProof", "/api/connect/link-proof", {
@@ -612,4 +635,5 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
+  .add(EnvironmentSpeechHttpApi)
   .add(EnvironmentConnectHttpApi) {}

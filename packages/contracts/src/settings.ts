@@ -124,6 +124,20 @@ export const FontFamilyPreference = Schema.String.check(Schema.isMaxLength(200))
 export type FontFamilyPreference = typeof FontFamilyPreference.Type;
 
 /**
+ * Spoken replies read the agent's final message aloud with a system voice
+ * when a turn finishes in the open thread, and announce questions and
+ * approvals that need the user. Client-local so only the device that opted
+ * in talks; the voice is a `SpeechSynthesisVoice.voiceURI`, null for the
+ * system default.
+ */
+export const SpokenRepliesVoice = Schema.String.check(Schema.isMaxLength(200));
+export type SpokenRepliesVoice = typeof SpokenRepliesVoice.Type;
+export const SPOKEN_REPLIES_RATES = [0.8, 1, 1.25, 1.5] as const;
+export const SpokenRepliesRate = Schema.Literals(SPOKEN_REPLIES_RATES);
+export type SpokenRepliesRate = typeof SpokenRepliesRate.Type;
+export const DEFAULT_SPOKEN_REPLIES_RATE: SpokenRepliesRate = 1;
+
+/**
  * Defaults for the in-app preview browser, applied whenever a tab is opened
  * without an explicit viewport/zoom/appearance — by the user opening a browser
  * tab, or by an agent calling `preview_open` with no size. Client-local
@@ -238,6 +252,13 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   sidebarThreadPreviewCount: SidebarThreadPreviewCount.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT)),
+  ),
+  spokenRepliesEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  spokenRepliesRate: SpokenRepliesRate.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SPOKEN_REPLIES_RATE)),
+  ),
+  spokenRepliesVoice: Schema.NullOr(SpokenRepliesVoice).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
@@ -600,6 +621,28 @@ export const BackgroundActivityOverrides = Schema.Struct({
 });
 export type BackgroundActivityOverrides = typeof BackgroundActivityOverrides.Type;
 
+/**
+ * Text-to-speech through an OpenAI-compatible `/v1/audio/speech` endpoint such
+ * as Kokoro-FastAPI, Speaches, or OpenAI. Server-side so every client of the
+ * environment, including phones on a tunnel, gets the same voice without
+ * holding the backend address or key. An empty URL means clients use their
+ * own system voices. The key is stored in plain text like other provider
+ * credentials in this file.
+ */
+export const DEFAULT_TEXT_TO_SPEECH_MODEL = "kokoro";
+export const DEFAULT_TEXT_TO_SPEECH_VOICE = "af_heart";
+export const SpeechSettings = Schema.Struct({
+  textToSpeechUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  textToSpeechModel: TrimmedString.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_TEXT_TO_SPEECH_MODEL)),
+  ),
+  textToSpeechVoice: TrimmedString.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_TEXT_TO_SPEECH_VOICE)),
+  ),
+  textToSpeechApiKey: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type SpeechSettings = typeof SpeechSettings.Type;
+
 export const BackgroundActivitySettings = Schema.Struct({
   schemaVersion: Schema.Literal(1).pipe(Schema.withDecodingDefault(Effect.succeed(1 as const))),
   profile: BackgroundActivityProfileSelection.pipe(
@@ -697,6 +740,7 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  speech: SpeechSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -868,6 +912,14 @@ export const ServerSettingsPatch = Schema.Struct({
       otlpMetricsUrl: Schema.optionalKey(TrimmedString),
     }),
   ),
+  speech: Schema.optionalKey(
+    Schema.Struct({
+      textToSpeechUrl: Schema.optionalKey(TrimmedString),
+      textToSpeechModel: Schema.optionalKey(TrimmedString),
+      textToSpeechVoice: Schema.optionalKey(TrimmedString),
+      textToSpeechApiKey: Schema.optionalKey(TrimmedString),
+    }),
+  ),
   providers: Schema.optionalKey(
     Schema.Struct({
       codex: Schema.optionalKey(CodexSettingsPatch),
@@ -944,6 +996,9 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
+  spokenRepliesEnabled: Schema.optionalKey(Schema.Boolean),
+  spokenRepliesRate: Schema.optionalKey(SpokenRepliesRate),
+  spokenRepliesVoice: Schema.optionalKey(Schema.NullOr(SpokenRepliesVoice)),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   wordWrap: Schema.optionalKey(Schema.Boolean),
 });

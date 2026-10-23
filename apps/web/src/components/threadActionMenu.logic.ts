@@ -19,6 +19,8 @@ export type ThreadActionMenuId =
   | "rename"
   | "regenerate-title"
   | "mark-unread"
+  | "spoken-replies-on"
+  | "spoken-replies-off"
   | "copy"
   | "copy-path"
   | "copy-branch"
@@ -35,6 +37,8 @@ export interface ThreadActionMenuState {
   readonly isRegeneratingTitle: boolean;
   /** Archive rejects a thread with an active turn, so disable it here rather than let the action fail. */
   readonly isRunning: boolean;
+  /** Whether this device reads the thread's replies aloud: its own choice, else the device default. */
+  readonly readsRepliesAloud: boolean;
   readonly supports: {
     readonly settlement: boolean;
     readonly snooze: boolean;
@@ -130,6 +134,9 @@ export function buildThreadActionMenuItems(
         ]
       : []),
     { id: "mark-unread", label: "Mark unread", icon: "mail-open" },
+    state.readsRepliesAloud
+      ? { id: "spoken-replies-off" as const, label: "Stop reading replies aloud", icon: "volume-x" }
+      : { id: "spoken-replies-on" as const, label: "Read replies aloud", icon: "volume-2" },
     {
       id: "copy",
       label: "Copy",

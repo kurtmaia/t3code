@@ -8,6 +8,7 @@
 - [Organizing threads](./user/thread-sidebar.md)
 - [Side conversations](./user/side-conversations.md)
 - [Reading markdown](./user/markdown.md)
+- [Spoken replies](./user/voice.md)
 - [Use a skill with any provider](./user/skills.md)
 - [Review usage](./user/usage.md)
 - [Customize a project icon](./user/project-settings.md)
@@ -37,6 +38,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Server updates](./internals/server-updates.md)
 - [Resource telemetry](./internals/resource-telemetry.md)
 - [Environment auth](./internals/environment-auth.md)
+- [Speech](./internals/speech.md)
 - [T3 Connect](./internals/t3-connect.md)
 - [CI gates](./internals/ci.md)
 
