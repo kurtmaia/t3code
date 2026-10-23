@@ -132,6 +132,7 @@ import {
   buildBulkTitleRegenerationContextMenuItem,
   firstValidTimestampMs,
   hasUnseenCompletion,
+  hiddenThreadsNeedAttention,
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
@@ -169,7 +170,10 @@ import {
 } from "./Sidebar.snooze";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { SidebarDraftBlock } from "./sidebar/SidebarDraftBlock";
-import { SidebarEnvironmentHeader } from "./sidebar/SidebarEnvironmentHeader";
+import {
+  SidebarEnvironmentHeader,
+  useCollapsedEnvironments,
+} from "./sidebar/SidebarEnvironmentHeader";
 import {
   SidebarThreadTooltip,
   terminalProcessLabel,
@@ -1761,21 +1765,34 @@ export default function Sidebar() {
     splitByEnvironment,
     unsectionedActiveThreads,
   ]);
+  const { collapsedEnvironmentIds, toggleEnvironmentCollapsed } = useCollapsedEnvironments();
+  const threadLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
   // Section order, flattened: jump labels and traversal follow what the
-  // user sees.
+  // user sees, so a collapsed section contributes only the open thread, which
+  // keeps its row (highlight, next/previous) the way the shelves do.
   const activeThreads = useMemo(
     () =>
-      activeEnvironmentSections?.flatMap((section) => section.items) ?? unsectionedActiveThreads,
-    [activeEnvironmentSections, unsectionedActiveThreads],
+      activeEnvironmentSections?.flatMap((section) =>
+        collapsedEnvironmentIds.has(section.environmentId)
+          ? section.items.filter(
+              (thread) =>
+                routeThreadKey !== null &&
+                scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
+            )
+          : section.items,
+      ) ?? unsectionedActiveThreads,
+    [activeEnvironmentSections, collapsedEnvironmentIds, routeThreadKey, unsectionedActiveThreads],
   );
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [activeSearchResultIndex, setActiveSearchResultIndex] = useState(0);
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
+  // Search is a lookup, not a view: a thread in a collapsed environment must
+  // still be findable.
   const searchableThreads = useMemo(
-    () => [...pinnedThreads, ...activeThreads, ...snoozedThreads, ...settledThreads],
-    [activeThreads, pinnedThreads, settledThreads, snoozedThreads],
+    () => [...pinnedThreads, ...unsectionedActiveThreads, ...snoozedThreads, ...settledThreads],
+    [pinnedThreads, settledThreads, snoozedThreads, unsectionedActiveThreads],
   );
   const threadSearchResults = useMemo(
     () => searchSidebarThreadsByTitle(searchableThreads, threadSearchQuery),
@@ -3511,9 +3528,39 @@ export default function Sidebar() {
                           data-thread-selection-safe
                           className="mb-0.5 mt-2 list-none first:mt-0"
                         >
-                          <SidebarEnvironmentHeader label={section.label} kind={section.kind} />
+                          <SidebarEnvironmentHeader
+                            label={section.label}
+                            kind={section.kind}
+                            collapsed={collapsedEnvironmentIds.has(section.environmentId)}
+                            count={section.items.length}
+                            attention={
+                              collapsedEnvironmentIds.has(section.environmentId) &&
+                              hiddenThreadsNeedAttention(
+                                section.items,
+                                (thread) =>
+                                  threadLastVisitedAtById[
+                                    scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
+                                  ],
+                              )
+                            }
+                            onToggle={() => toggleEnvironmentCollapsed(section.environmentId)}
+                          />
                         </li>,
                       );
+                      if (collapsedEnvironmentIds.has(section.environmentId)) {
+                        // The open thread keeps its row inside a collapsed
+                        // section, same exception the shelves make.
+                        const routeThread = section.items.find(
+                          (thread) =>
+                            routeThreadKey !== null &&
+                            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) ===
+                              routeThreadKey,
+                        );
+                        if (routeThread !== undefined) {
+                          items.push(renderThreadRow(routeThread, "active"));
+                        }
+                        continue;
+                      }
                       for (const thread of section.items) {
                         items.push(renderThreadRow(thread, "active"));
                       }
@@ -3616,7 +3663,7 @@ export default function Sidebar() {
           {!isSearchingThreads &&
           visibleDraftSessionCount === 0 &&
           pinnedThreads.length +
-            activeThreads.length +
+            unsectionedActiveThreads.length +
             snoozedThreads.length +
             settledThreads.length ===
             0 ? (

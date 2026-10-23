@@ -145,6 +145,22 @@ export function useSettingsProjectGroups(): SidebarProjectSnapshot[] {
   );
 }
 
+// Resolves a /projects/$projectKey param: a group key, or the physical key of
+// any member. The legacy sidebar links by physical key because its groups can
+// be split per environment, which the settings page does not do.
+function findSettingsProjectGroup(
+  groups: readonly SidebarProjectSnapshot[],
+  projectKey: string,
+): SidebarProjectSnapshot | null {
+  return (
+    groups.find((group) => group.projectKey === projectKey) ??
+    groups.find((group) =>
+      group.memberProjects.some((member) => member.physicalProjectKey === projectKey),
+    ) ??
+    null
+  );
+}
+
 function memberKey(member: { environmentId: string; id: string }): string {
   return `${member.environmentId}:${member.id}`;
 }
@@ -190,7 +206,7 @@ export function ProjectSettingsPage({ projectKey }: { projectKey: string }) {
 function ProjectSettingsBreadcrumb({ projectKey }: { projectKey: string }) {
   const groups = useSettingsProjectGroups();
   const navigate = useNavigate();
-  const selected = groups.find((group) => group.projectKey === projectKey) ?? null;
+  const selected = findSettingsProjectGroup(groups, projectKey);
   const openProjectMenu = (event: ReactMouseEvent<HTMLButtonElement>) => {
     const api = readLocalApi();
     if (!api) return;
@@ -246,7 +262,7 @@ export function ProjectSettingsPanel({ projectKey }: { projectKey: string }) {
   const groups = useSettingsProjectGroups();
   const navigate = useNavigate();
 
-  const selected = groups.find((group) => group.projectKey === projectKey) ?? null;
+  const selected = findSettingsProjectGroup(groups, projectKey);
 
   // Remember the members of the last rendered group so a grouping-rule change
   // (which changes the group key) can follow the project to its new group.

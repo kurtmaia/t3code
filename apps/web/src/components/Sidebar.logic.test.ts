@@ -36,6 +36,7 @@ import {
   sortScopedProjectsForSidebar,
   shouldCreateNewThreadInCurrentProject,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
+  hiddenThreadsNeedAttention,
 } from "./Sidebar.logic";
 import {
   EnvironmentId,
@@ -1710,5 +1711,38 @@ describe("nestSubThreadsInSidebarList", () => {
     const { ordered, nestedKeys } = nestSubThreadsInSidebarList(input);
     expect(ordered).toEqual(input);
     expect(nestedKeys.size).toBe(0);
+  });
+});
+
+describe("hiddenThreadsNeedAttention", () => {
+  const quiet = {
+    hasActionableProposedPlan: false,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    interactionMode: "default" as const,
+    latestTurn: null,
+    session: null,
+  };
+  const neverVisited = () => undefined;
+
+  it("flags approvals, questions, and failures", () => {
+    expect(
+      hiddenThreadsNeedAttention([{ ...quiet, hasPendingApprovals: true }], neverVisited),
+    ).toBe(true);
+    expect(
+      hiddenThreadsNeedAttention([{ ...quiet, hasPendingUserInput: true }], neverVisited),
+    ).toBe(true);
+  });
+
+  it("flags a completion the user has not seen, but not one they have", () => {
+    const done = { ...quiet, latestTurn: makeLatestTurn() };
+    expect(hiddenThreadsNeedAttention([done], () => "2026-03-09T10:04:00.000Z")).toBe(true);
+    expect(hiddenThreadsNeedAttention([done], () => "2099-01-01T00:00:00.000Z")).toBe(false);
+  });
+
+  it("stays quiet for idle or never-visited threads", () => {
+    expect(
+      hiddenThreadsNeedAttention([quiet, { ...quiet, latestTurn: makeLatestTurn() }], neverVisited),
+    ).toBe(false);
   });
 });
