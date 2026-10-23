@@ -8,7 +8,7 @@ export class ClipboardApiUnavailableError extends Schema.TaggedErrorClass<Clipbo
   },
 ) {
   override get message(): string {
-    return `Clipboard API is unavailable while copying ${this.target}.`;
+    return `Clipboard is unavailable while copying ${this.target}. Copying needs a secure (https) connection, or a direct tap on a copy button.`;
   }
 }
 
@@ -47,12 +47,49 @@ export class ClipboardReadError extends Schema.TaggedErrorClass<ClipboardReadErr
   }
 }
 
+/**
+ * `navigator.clipboard` only exists in secure contexts, so a phone reaching the
+ * server over plain http (LAN or tailnet IP) has none. The legacy copy command
+ * still works there as long as it runs inside the user's tap.
+ */
+function copyWithExecCommand(value: string): boolean {
+  if (typeof document === "undefined" || !document.body) return false;
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  // Off-screen but still selectable; 16px avoids the iOS zoom-on-focus jump.
+  textarea.style.cssText = "position:fixed;top:0;left:-9999px;opacity:0;font-size:16px;";
+  const activeElement = document.activeElement;
+  document.body.appendChild(textarea);
+  try {
+    textarea.select();
+    textarea.setSelectionRange(0, value.length);
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    textarea.remove();
+    if (activeElement instanceof HTMLElement) activeElement.focus({ preventScroll: true });
+  }
+}
+
+/**
+ * Whether a copy can work here at all: the async clipboard on secure origins,
+ * or the legacy command elsewhere. Use it to gate copy affordances instead of
+ * testing `navigator.clipboard` directly, which hides them on plain http.
+ */
+export function isClipboardWriteSupported(): boolean {
+  if (typeof window === "undefined" || typeof navigator === "undefined") return false;
+  if (navigator.clipboard !== undefined) return true;
+  return (
+    typeof document !== "undefined" &&
+    typeof document.queryCommandSupported === "function" &&
+    document.queryCommandSupported("copy")
+  );
+}
+
 export async function writeTextToClipboard(value: string, target = "text") {
-  if (
-    typeof window === "undefined" ||
-    typeof navigator === "undefined" ||
-    !navigator.clipboard?.writeText
-  ) {
+  if (typeof window === "undefined" || typeof navigator === "undefined") {
     throw new ClipboardApiUnavailableError({
       target,
     });
@@ -60,10 +97,20 @@ export async function writeTextToClipboard(value: string, target = "text") {
 
   if (!value) return false;
 
+  if (!navigator.clipboard?.writeText) {
+    if (copyWithExecCommand(value)) return true;
+    throw new ClipboardApiUnavailableError({
+      target,
+    });
+  }
+
   try {
     await navigator.clipboard.writeText(value);
     return true;
   } catch (cause) {
+    // The async API also rejects on secure origins when the document is not
+    // focused (devtools open, say); the legacy command still works then.
+    if (copyWithExecCommand(value)) return true;
     throw new ClipboardWriteError({
       target,
       cause,
