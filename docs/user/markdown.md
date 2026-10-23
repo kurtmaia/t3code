@@ -17,7 +17,11 @@ Weights $w_i = \exp(\lambda t_i)$ decay with age.
 $$Y_i \mid x_i \sim \mathcal{N}(\mu, \sigma^2)$$
 ```
 
-Single `$` is only treated as math when it wraps an expression, so prices like `$5` are left alone.
+Single `$` is only treated as math when it wraps an expression: the opening `$` has to be followed
+by a non-space, and the closing `$` has to be preceded by a non-space and not followed by a digit.
+Prices written the usual way stay prose however many of them a sentence holds, so
+`$3,230 linehaul + $1,566.55 fuel` keeps its dollar signs and any bold around them. A `$` glued
+to a letter or a bracket on both sides, such as `$x$`, is still math.
 An expression that is still being typed renders in red until it is complete, rather than blanking
 the message around it.
 

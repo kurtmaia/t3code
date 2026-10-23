@@ -47,9 +47,9 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
-import remarkMath from "remark-math";
 import "katex/dist/katex.min.css";
 import { remarkGithubAlerts } from "../markdown-github-alerts";
+import { remarkCurrencySafeMath } from "../markdown-math-currency";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import { canToggleMermaidFenceView, mermaidFenceView } from "./chat/mermaidFence";
 import { CHAT_FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
@@ -202,7 +202,7 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS: NonNullable<ReactMarkdownOptions["rem
   remarkGfm,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
-  remarkMath,
+  remarkCurrencySafeMath,
   remarkPreserveCodeMeta,
   remarkTagInlineCode,
 ];
@@ -212,7 +212,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkBreaks,
-  remarkMath,
+  remarkCurrencySafeMath,
   remarkPreserveCodeMeta,
   remarkTagInlineCode,
 ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
