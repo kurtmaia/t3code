@@ -60,4 +60,41 @@ describe("markdown math", () => {
     expect(html).toContain("it costs $5 and change");
     expect(html).not.toContain("katex");
   });
+
+  it("leaves two dollar amounts in a sentence alone", () => {
+    // The closing candidate sits after a space, which no inline expression does.
+    const html = renderMarkdown("both $3,230 linehaul + $1,566.55 fuel");
+
+    expect(html).toContain("both $3,230 linehaul + $1,566.55 fuel");
+    expect(html).not.toContain("katex");
+  });
+
+  it("keeps emphasis around a dollar amount instead of typesetting it", () => {
+    // The regression this guards: the math span used to swallow the `**`, so
+    // the amount lost its bold as well as its dollar sign.
+    const html = renderMarkdown("fuel + $270 tankwash = **$2,973.01**");
+
+    expect(html).toContain("<strong>$2,973.01</strong>");
+    expect(html).not.toContain("katex");
+  });
+
+  it("leaves a rate written as a ratio of amounts alone", () => {
+    const html = renderMarkdown("linehaul $1,738.05/$525.2 mi");
+
+    expect(html).toContain("linehaul $1,738.05/$525.2 mi");
+    expect(html).not.toContain("katex");
+  });
+
+  it("still renders inline math on a line that also quotes an amount", () => {
+    const html = renderMarkdown("it costs $5, and $x^2$ holds");
+
+    expect(html).toContain("katex");
+    expect(html).toContain("it costs $5,");
+  });
+
+  it("keeps display math permissive about padding", () => {
+    const html = renderMarkdown("$$ a^2 + b^2 = c^2 $$");
+
+    expect(html).toContain("katex");
+  });
 });
