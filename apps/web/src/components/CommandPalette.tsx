@@ -1,6 +1,10 @@
 "use client";
 
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  scopeProjectRef,
+  scopeThreadRef,
+  scopedThreadKey,
+} from "@t3tools/client-runtime/environment";
 import {
   canCreateProjectInEnvironment,
   getCloneDestinationBrowsePath,
@@ -47,6 +51,8 @@ import {
   SettingsIcon,
   SquarePenIcon,
   TextSearchIcon,
+  Volume2Icon,
+  VolumeXIcon,
 } from "lucide-react";
 import {
   useCallback,
@@ -66,6 +72,8 @@ import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useClientSettings } from "../hooks/useSettings";
+import { stopSpeaking, useIsSpeaking } from "../speech/speak";
+import { setThreadSpokenReplies, toggleSpokenReplies } from "../speech/spokenReplies";
 import { useTheme } from "../hooks/useTheme";
 import { readLocalApi } from "../localApi";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
@@ -581,6 +589,7 @@ function OpenCommandPaletteDialog(props: {
   const isActionsOnly = deferredQuery.startsWith(">");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
   const clientSettings = useClientSettings();
+  const isSpeaking = useIsSpeaking();
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
@@ -604,8 +613,11 @@ function OpenCommandPaletteDialog(props: {
   const { environments } = useEnvironments();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
+  const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef } =
     useHandleNewThread();
+  const threadSpokenRepliesOverride = useUiStateStore((state) =>
+    routeThreadRef ? state.threadSpokenRepliesById[scopedThreadKey(routeThreadRef)] : undefined,
+  );
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
@@ -1655,6 +1667,51 @@ function OpenCommandPaletteDialog(props: {
       await navigate({ to: "/settings" });
     },
   });
+
+  if (routeThreadRef) {
+    const threadReadsAloud = threadSpokenRepliesOverride ?? clientSettings.spokenRepliesEnabled;
+    actionItems.push({
+      kind: "action",
+      value: "action:spoken-replies-thread",
+      searchTerms: ["voice", "speech", "speak", "read aloud", "audio", "tts", "spoken replies"],
+      title: threadReadsAloud
+        ? "Stop reading replies aloud in this thread"
+        : "Read replies aloud in this thread",
+      icon: <Volume2Icon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "voice.toggleSpokenReplies",
+      run: async () => {
+        setThreadSpokenReplies(routeThreadRef, !threadReadsAloud);
+      },
+    });
+  } else {
+    actionItems.push({
+      kind: "action",
+      value: "action:spoken-replies",
+      searchTerms: ["voice", "speech", "speak", "read aloud", "audio", "tts", "spoken replies"],
+      title: clientSettings.spokenRepliesEnabled
+        ? "Turn off spoken replies by default"
+        : "Turn on spoken replies by default",
+      icon: <Volume2Icon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "voice.toggleSpokenReplies",
+      run: async () => {
+        toggleSpokenReplies();
+      },
+    });
+  }
+
+  if (isSpeaking) {
+    actionItems.push({
+      kind: "action",
+      value: "action:stop-speaking",
+      searchTerms: ["voice", "speech", "stop", "quiet", "mute"],
+      title: "Stop speaking",
+      icon: <VolumeXIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "voice.stopSpeaking",
+      run: async () => {
+        stopSpeaking();
+      },
+    });
+  }
 
   // There is no projects listing page; the action targets the contextual
   // project (active thread/draft, falling back to the first sidebar group).

@@ -5,7 +5,7 @@
  * rAF-coalesced and renders nothing at all while there is no eligible
  * selection; scrolling dismisses the affordance rather than tracking it.
  */
-import { MessageSquareQuote } from "lucide-react";
+import { MessageSquareQuote, Volume2Icon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 
 interface EligibleSelection {
@@ -19,6 +19,8 @@ interface QuoteSelectionAffordanceProps {
   containerRef: RefObject<HTMLElement | null>;
   enabled: boolean;
   onAskAboutSelection: (input: { messageId: string; quoteText: string }) => void;
+  /** Reads the selected passage aloud; omitted hides the action. */
+  onReadSelection?: (input: { messageId: string; quoteText: string }) => void;
 }
 
 function resolveEligibleSelection(container: HTMLElement): EligibleSelection | null {
@@ -57,7 +59,7 @@ function resolveEligibleSelection(container: HTMLElement): EligibleSelection | n
 }
 
 export function QuoteSelectionAffordance(props: QuoteSelectionAffordanceProps) {
-  const { containerRef, enabled, onAskAboutSelection } = props;
+  const { containerRef, enabled, onAskAboutSelection, onReadSelection } = props;
   const [selection, setSelection] = useState<EligibleSelection | null>(null);
   const frameRef = useRef<number | null>(null);
 
@@ -96,13 +98,23 @@ export function QuoteSelectionAffordance(props: QuoteSelectionAffordanceProps) {
     setSelection(null);
   }, [onAskAboutSelection, selection]);
 
+  const onRead = useCallback(() => {
+    if (!selection || !onReadSelection) return;
+    onReadSelection({ messageId: selection.messageId, quoteText: selection.quoteText });
+    window.getSelection()?.removeAllRanges();
+    setSelection(null);
+  }, [onReadSelection, selection]);
+
   if (!selection) {
     return null;
   }
 
+  const pillClassName =
+    "flex items-center gap-1.5 rounded-full border bg-background px-2.5 py-1 text-xs shadow-md transition-colors hover:bg-muted";
+
   return (
     <div
-      className="fixed z-50"
+      className="fixed z-50 flex items-center gap-1.5"
       style={{
         top: Math.max(selection.rect.top - 34, 8),
         left: selection.rect.left + selection.rect.width / 2,
@@ -116,11 +128,24 @@ export function QuoteSelectionAffordance(props: QuoteSelectionAffordanceProps) {
           event.preventDefault();
           onAsk();
         }}
-        className="flex items-center gap-1.5 rounded-full border bg-background px-2.5 py-1 text-xs shadow-md transition-colors hover:bg-muted"
+        className={pillClassName}
       >
         <MessageSquareQuote className="size-3" />
         Ask about this
       </button>
+      {onReadSelection ? (
+        <button
+          type="button"
+          // Keep the selection on press; act on release, which counts as a
+          // user gesture for audio on touch devices where pointerdown does not.
+          onPointerDown={(event) => event.preventDefault()}
+          onPointerUp={onRead}
+          className={pillClassName}
+        >
+          <Volume2Icon className="size-3" />
+          Read aloud
+        </button>
+      ) : null}
     </div>
   );
 }

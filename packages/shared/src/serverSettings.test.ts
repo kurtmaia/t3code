@@ -513,3 +513,30 @@ describe("serverSettings helpers", () => {
     expect(resolved.pauseWhenOnBattery).toBe(false);
   });
 });
+
+describe("applyServerSettingsPatch speech key", () => {
+  const stored = {
+    ...DEFAULT_SERVER_SETTINGS,
+    speech: { ...DEFAULT_SERVER_SETTINGS.speech, textToSpeechApiKey: "stored-key" },
+  };
+
+  it("keeps the stored key when a patch echoes the redacted marker", () => {
+    const next = applyServerSettingsPatch(stored, {
+      speech: { textToSpeechUrl: "http://localhost:8890", textToSpeechApiKeyRedacted: true },
+    });
+    expect(next.speech.textToSpeechApiKey).toBe("stored-key");
+    expect(next.speech.textToSpeechUrl).toBe("http://localhost:8890");
+    expect("textToSpeechApiKeyRedacted" in next.speech).toBe(false);
+  });
+
+  it("replaces or clears the key when a patch states it plainly", () => {
+    expect(
+      applyServerSettingsPatch(stored, { speech: { textToSpeechApiKey: "new-key" } }).speech
+        .textToSpeechApiKey,
+    ).toBe("new-key");
+    expect(
+      applyServerSettingsPatch(stored, { speech: { textToSpeechApiKey: "" } }).speech
+        .textToSpeechApiKey,
+    ).toBe("");
+  });
+});

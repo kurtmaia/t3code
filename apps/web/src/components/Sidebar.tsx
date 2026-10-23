@@ -107,7 +107,8 @@ import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
-import { useClientSettings } from "../hooks/useSettings";
+import { getClientSettings, useClientSettings } from "../hooks/useSettings";
+import { setThreadSpokenReplies } from "../speech/spokenReplies";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -2736,6 +2737,9 @@ export default function Sidebar() {
               isRegeneratingTitle,
               isRunning:
                 thread.session?.status === "running" && thread.session.activeTurnId != null,
+              readsRepliesAloud:
+                useUiStateStore.getState().threadSpokenRepliesById[threadKey] ??
+                getClientSettings().spokenRepliesEnabled,
               supports: {
                 settlement: supportsSettlement,
                 snooze: supportsSnooze,
@@ -2844,6 +2848,12 @@ export default function Sidebar() {
           }
           case "mark-unread":
             markThreadUnread(threadKey, thread.latestTurn?.completedAt);
+            return;
+          case "spoken-replies-on":
+            setThreadSpokenReplies(scopeThreadRef(thread.environmentId, thread.id), true);
+            return;
+          case "spoken-replies-off":
+            setThreadSpokenReplies(scopeThreadRef(thread.environmentId, thread.id), false);
             return;
           case "copy-path":
             if (!threadWorkspacePath) {

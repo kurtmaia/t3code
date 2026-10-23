@@ -35,7 +35,8 @@ import { readLocalApi } from "../localApi";
 import { useUiStateStore } from "../uiStateStore";
 import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
-import { useClientSettings } from "./useSettings";
+import { getClientSettings, useClientSettings } from "./useSettings";
+import { setThreadSpokenReplies } from "../speech/spokenReplies";
 import { useThreadActions } from "./useThreadActions";
 
 function failureToast(title: string, error: unknown) {
@@ -148,6 +149,9 @@ export function useThreadActionMenu(input: {
           canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
           isRegeneratingTitle,
           isRunning: thread.session?.status === "running" && thread.session.activeTurnId != null,
+          readsRepliesAloud:
+            useUiStateStore.getState().threadSpokenRepliesById[scopedThreadKey(threadRef)] ??
+            getClientSettings().spokenRepliesEnabled,
           supports,
           snoozePresets,
           tasks: projectTasks.map((task) => ({ id: task.id, title: task.title })),
@@ -258,6 +262,12 @@ export function useThreadActionMenu(input: {
             return;
           case "mark-unread":
             markThreadUnread(scopedThreadKey(threadRef), thread.latestTurn?.completedAt);
+            return;
+          case "spoken-replies-on":
+            setThreadSpokenReplies(threadRef, true);
+            return;
+          case "spoken-replies-off":
+            setThreadSpokenReplies(threadRef, false);
             return;
           case "copy-path": {
             const workspacePath = thread.worktreePath ?? projectCwd;

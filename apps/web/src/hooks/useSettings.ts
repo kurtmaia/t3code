@@ -349,6 +349,17 @@ export function useUpdatePrimarySettings() {
   return useUpdateSettingsTarget(usePrimaryEnvironment()?.environmentId ?? null);
 }
 
+/**
+ * Non-hook client settings updater for imperative paths such as keybinding
+ * handlers; the hook form below is the same operation.
+ */
+export function updateClientSettings(patch: ClientSettingsPatch): void {
+  persistClientSettings({
+    ...getClientSettingsSnapshot(),
+    ...patch,
+  });
+}
+
 export function useUpdateClientSettings() {
   return useCallback((patch: ClientSettingsPatch) => {
     persistClientSettings({

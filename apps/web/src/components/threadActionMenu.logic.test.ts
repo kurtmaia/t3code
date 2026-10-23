@@ -10,6 +10,7 @@ const baseState: ThreadActionMenuState = {
   canSnoozeNow: true,
   isRegeneratingTitle: false,
   isRunning: false,
+  readsRepliesAloud: false,
   supports: { settlement: true, snooze: true, pinning: true, titleRegeneration: true },
   tasks: [],
   currentTaskId: null,
@@ -35,7 +36,12 @@ describe("buildThreadActionMenuItems", () => {
         ...baseState,
         supports: { settlement: false, snooze: false, pinning: false, titleRegeneration: false },
       }),
-    ).toEqual(["rename", "mark-unread", "copy", "archive", "delete"]);
+    ).toEqual(["rename", "mark-unread", "spoken-replies-on", "copy", "archive", "delete"]);
+  });
+
+  it("offers to stop reading aloud when the thread is already being read", () => {
+    expect(ids({ ...baseState, readsRepliesAloud: true })).toContain("spoken-replies-off");
+    expect(ids({ ...baseState, readsRepliesAloud: true })).not.toContain("spoken-replies-on");
   });
 
   it("includes branch items only for threads with a branch", () => {

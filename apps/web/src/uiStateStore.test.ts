@@ -15,6 +15,7 @@ import {
   setProjectExpanded,
   setThreadChangedFilesExpanded,
   type UiState,
+  setThreadSpokenReplies,
 } from "./uiStateStore";
 
 function makeUiState(overrides: Partial<UiState> = {}): UiState {
@@ -23,6 +24,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectOrder: [],
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
+    threadSpokenRepliesById: {},
     defaultAdvertisedEndpointKey: null,
     ...overrides,
   };
@@ -183,6 +185,7 @@ describe("parsePersistedState", () => {
           "turn-2": true,
         },
       },
+      threadSpokenRepliesById: {},
     });
   });
 
@@ -303,6 +306,7 @@ describe("uiStateStore persistence", () => {
           "turn-2": true,
         },
       },
+      threadSpokenRepliesById: {},
     });
     expect(parsePersistedState(persisted)).toEqual({
       ...state,
@@ -320,5 +324,16 @@ describe("uiStateStore persistence", () => {
       localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
     ) as PersistedUiState;
     expect(resolveProjectExpanded(persisted.projectExpandedById ?? {}, ["unknown"])).toBe(true);
+  });
+});
+
+describe("setThreadSpokenReplies", () => {
+  it("stores a per-thread choice and forgets it with null", () => {
+    const on = setThreadSpokenReplies(makeUiState(), "env:thread-1", true);
+    expect(on.threadSpokenRepliesById).toEqual({ "env:thread-1": true });
+    const off = setThreadSpokenReplies(on, "env:thread-1", false);
+    expect(off.threadSpokenRepliesById).toEqual({ "env:thread-1": false });
+    expect(setThreadSpokenReplies(off, "env:thread-1", false)).toBe(off);
+    expect(setThreadSpokenReplies(off, "env:thread-1", null).threadSpokenRepliesById).toEqual({});
   });
 });

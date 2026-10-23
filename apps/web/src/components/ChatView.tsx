@@ -122,6 +122,9 @@ import {
   type TurnDiffSummary,
 } from "../types";
 import { useTheme } from "../hooks/useTheme";
+import { useSpokenReplies } from "../hooks/useSpokenReplies";
+import { readAloud } from "../speech/spokenReplies";
+import { stopSpeaking } from "../speech/speak";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
@@ -172,6 +175,7 @@ import {
   GitBranchIcon,
   PaperclipIcon,
   WifiOffIcon,
+  Volume2Icon,
 } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -369,6 +373,9 @@ import {
   serverUpdateGuidance,
 } from "../versionSkew";
 import { useAssetUrls } from "../assets/assetUrls";
+
+const selectSpokenRepliesDefault = (settings: { spokenRepliesEnabled: boolean }) =>
+  settings.spokenRepliesEnabled;
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
@@ -1575,6 +1582,11 @@ function ChatViewContent(props: ChatViewProps) {
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const activeThreadId = activeThread?.id ?? null;
   const activeThreadEnvironmentId = activeThread?.environmentId ?? null;
+  const readSelectionAloud = useCallback(
+    ({ messageId, quoteText }: { messageId: string; quoteText: string }) =>
+      readAloud(activeThreadEnvironmentId, quoteText, messageId),
+    [activeThreadEnvironmentId],
+  );
   const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: activeThread?.environmentId ?? null,
     threadId: activeThreadId,
@@ -2267,6 +2279,19 @@ function ChatViewContent(props: ChatViewProps) {
     () => derivePendingUserInputs(threadActivities),
     [threadActivities],
   );
+  const spokenRepliesDefault = useClientSettings(selectSpokenRepliesDefault);
+  const spokenRepliesOverride = useUiStateStore((store) =>
+    activeThreadKey === null ? undefined : store.threadSpokenRepliesById[activeThreadKey],
+  );
+  const isSpeakingReply = useSpokenReplies({
+    enabled: spokenRepliesOverride ?? spokenRepliesDefault,
+    // The loading shell carries no activities; baselining on it would make
+    // every already-pending approval sound new once the detail arrives.
+    thread: serverThread,
+    threadKey: activeThreadKey,
+    pendingApprovals,
+    pendingUserInputs,
+  });
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const activePendingDraftAnswers = useMemo(
     () =>
@@ -4610,6 +4635,23 @@ function ChatViewContent(props: ChatViewProps) {
     handleStopBackgroundWork,
     isStoppingBackgroundWork,
   ]);
+  // Spoken replies: a visible reverse state for audio the user cannot see.
+  const spokenReplyBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    if (!isSpeakingReply) {
+      return null;
+    }
+    return {
+      id: "spoken-reply",
+      variant: "default",
+      icon: <Volume2Icon />,
+      title: "Reading aloud",
+      actions: (
+        <Button size="xs" variant="outline" onClick={stopSpeaking}>
+          Stop
+        </Button>
+      ),
+    };
+  }, [isSpeakingReply]);
   // A woken thread announces itself in the open view, not just the sidebar
   // pill. Dismissing marks the wake as seen (same acknowledgment as the
   // pill); sending a message clears it as a side effect of the send path.
@@ -4689,12 +4731,14 @@ function ChatViewContent(props: ChatViewProps) {
     const calmSystemItems = systemComposerBannerItems.filter((item) => !isUrgentSystemItem(item));
     const backgroundLivenessItems =
       backgroundLivenessBannerItem === null ? [] : [backgroundLivenessBannerItem];
+    const spokenReplyItems = spokenReplyBannerItem === null ? [] : [spokenReplyBannerItem];
     const wokeThreadItems = wokeThreadBannerItem === null ? [] : [wokeThreadBannerItem];
     const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...urgentSystemItems,
         ...backgroundLivenessItems,
+        ...spokenReplyItems,
         ...calmSystemItems,
         ...wokeThreadItems,
         ...parkedThreadItems,
@@ -4703,6 +4747,7 @@ function ChatViewContent(props: ChatViewProps) {
     return [
       ...urgentSystemItems,
       ...backgroundLivenessItems,
+      ...spokenReplyItems,
       ...calmSystemItems,
       ...wokeThreadItems,
       {
@@ -4747,6 +4792,7 @@ function ChatViewContent(props: ChatViewProps) {
       ...parkedThreadItems,
     ];
   }, [
+    spokenReplyBannerItem,
     activeBranchMismatchKey,
     backgroundLivenessBannerItem,
     handleRestoreThreadBranch,
@@ -6500,6 +6546,7 @@ function ChatViewContent(props: ChatViewProps) {
                 containerRef={timelineContainerRef}
                 enabled={isServerThread}
                 onAskAboutSelection={openSubThreadDraftSurface}
+                onReadSelection={readSelectionAloud}
               />
 
               {/* scroll to end pill — shown when user has scrolled away from the live edge */}

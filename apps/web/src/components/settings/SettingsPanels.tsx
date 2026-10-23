@@ -9,6 +9,8 @@ import {
   ProviderDriverKind,
   type ScopedThreadRef,
   type SidebarProjectGroupingMode,
+  SPOKEN_REPLIES_RATES,
+  type SpokenRepliesRate,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -63,6 +65,7 @@ import {
 } from "../../hooks/useTheme";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
+import { usePrimaryEnvironment } from "../../state/environments";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
@@ -143,6 +146,12 @@ import {
   useSettingsSearchTargetId,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+import {
+  isSpeechSynthesisSupported,
+  sortVoicesForLocale,
+  useSpeechVoices,
+} from "../../speech/speechSynthesis";
+import { setSpokenRepliesEnabled, speakSample } from "../../speech/spokenReplies";
 import { ProjectFavicon } from "../ProjectFavicon";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
@@ -498,6 +507,16 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Auto-settle merged threads"]
         : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
+      ...(settings.spokenRepliesEnabled !== DEFAULT_UNIFIED_SETTINGS.spokenRepliesEnabled
+        ? ["Spoken replies"]
+        : []),
+      ...(settings.spokenRepliesVoice !== DEFAULT_UNIFIED_SETTINGS.spokenRepliesVoice
+        ? ["Voice"]
+        : []),
+      ...(settings.spokenRepliesRate !== DEFAULT_UNIFIED_SETTINGS.spokenRepliesRate
+        ? ["Speaking rate"]
+        : []),
+      ...(!Equal.equals(settings.speech, DEFAULT_UNIFIED_SETTINGS.speech) ? ["Neural voice"] : []),
       ...getChangedTypographySettingLabels(settings),
       ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
         ? ["Diff whitespace changes"]
@@ -567,6 +586,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarAutoSettleOnMerge,
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
+      settings.spokenRepliesEnabled,
+      settings.spokenRepliesRate,
+      settings.spokenRepliesVoice,
+      settings.speech,
       settings.timestampFormat,
       settings.wordWrap,
       followSystem,
@@ -640,6 +663,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     updateSettings({
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
+      spokenRepliesEnabled: DEFAULT_UNIFIED_SETTINGS.spokenRepliesEnabled,
+      spokenRepliesVoice: DEFAULT_UNIFIED_SETTINGS.spokenRepliesVoice,
+      spokenRepliesRate: DEFAULT_UNIFIED_SETTINGS.spokenRepliesRate,
+      speech: DEFAULT_SPEECH_SETTINGS_PATCH,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
@@ -1786,6 +1813,254 @@ function LegacyFeaturesSection() {
   );
 }
 
+// The client copy of `speech` may carry the "key saved" marker, which a patch
+// must not echo as a value, so defaults are restated field by field.
+const DEFAULT_SPEECH_SETTINGS_PATCH = {
+  textToSpeechUrl: DEFAULT_UNIFIED_SETTINGS.speech.textToSpeechUrl,
+  textToSpeechModel: DEFAULT_UNIFIED_SETTINGS.speech.textToSpeechModel,
+  textToSpeechVoice: DEFAULT_UNIFIED_SETTINGS.speech.textToSpeechVoice,
+  textToSpeechApiKey: DEFAULT_UNIFIED_SETTINGS.speech.textToSpeechApiKey,
+};
+
+const SPOKEN_REPLIES_RATE_LABELS: Record<SpokenRepliesRate, string> = {
+  0.8: "Slower",
+  1: "Normal",
+  1.25: "Faster",
+  1.5: "Fastest",
+};
+const SYSTEM_DEFAULT_VOICE = "system-default";
+
+function SpokenRepliesSection() {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  const primaryEnvironmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  const supported = isSpeechSynthesisSupported();
+  const backendConfigured = settings.speech.textToSpeechUrl.length > 0;
+  const backend =
+    backendConfigured && primaryEnvironmentId !== null
+      ? { environmentId: primaryEnvironmentId }
+      : null;
+  const speechDirty = !Equal.equals(settings.speech, DEFAULT_UNIFIED_SETTINGS.speech);
+  const voices = useSpeechVoices();
+  const sortedVoices = useMemo(
+    () => sortVoicesForLocale(voices, typeof navigator === "undefined" ? "en" : navigator.language),
+    [voices],
+  );
+  const selectedVoice =
+    sortedVoices.find((voice) => voice.voiceURI === settings.spokenRepliesVoice) ?? null;
+  const enabled = (supported || backendConfigured) && settings.spokenRepliesEnabled;
+
+  return (
+    <SettingsSection id="voice" title="Voice">
+      <SettingsRow
+        {...searchableSetting("spoken-replies")}
+        description={
+          supported
+            ? "Default for threads that have not chosen for themselves: read the final reply aloud when a turn finishes in the open thread, and announce questions and approvals. Turn reading on or off for one thread from its menu. Only this device speaks."
+            : "This browser has no speech voices. Replies can still be read aloud through a neural voice server."
+        }
+        control={
+          <Switch
+            checked={enabled}
+            disabled={!supported && !backendConfigured}
+            onCheckedChange={(checked) => setSpokenRepliesEnabled(Boolean(checked))}
+            aria-label="Read replies aloud"
+          />
+        }
+      />
+      <SettingsRow
+        {...searchableSetting("spoken-replies-voice")}
+        description={
+          backendConfigured
+            ? "The system voice is the fallback while a neural voice server is set. Test plays the neural voice."
+            : "A system voice installed on this device. Test plays a short sample."
+        }
+        resetAction={
+          settings.spokenRepliesVoice !== null ? (
+            <SettingResetButton
+              label="voice"
+              onClick={() => updateSettings({ spokenRepliesVoice: null })}
+            />
+          ) : null
+        }
+        control={
+          <div className="flex items-center gap-2">
+            <Select
+              value={selectedVoice?.voiceURI ?? SYSTEM_DEFAULT_VOICE}
+              onValueChange={(value) => {
+                updateSettings({
+                  spokenRepliesVoice:
+                    typeof value === "string" && value !== SYSTEM_DEFAULT_VOICE ? value : null,
+                });
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-56" aria-label="Voice" disabled={!supported}>
+                <SelectValue>{selectedVoice ? selectedVoice.name : "System default"}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value={SYSTEM_DEFAULT_VOICE}>
+                  System default
+                </SelectItem>
+                {sortedVoices.map((voice) => (
+                  <SelectItem hideIndicator key={voice.voiceURI} value={voice.voiceURI}>
+                    {voice.name} ({voice.lang})
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={!supported && backend === null}
+              onClick={() => {
+                speakSample(backend);
+              }}
+            >
+              Test
+            </Button>
+          </div>
+        }
+      />
+      <SettingsRow
+        {...searchableSetting("spoken-replies-rate")}
+        resetAction={
+          settings.spokenRepliesRate !== DEFAULT_UNIFIED_SETTINGS.spokenRepliesRate ? (
+            <SettingResetButton
+              label="speaking rate"
+              onClick={() =>
+                updateSettings({ spokenRepliesRate: DEFAULT_UNIFIED_SETTINGS.spokenRepliesRate })
+              }
+            />
+          ) : null
+        }
+        control={
+          <Select
+            value={String(settings.spokenRepliesRate)}
+            onValueChange={(value) => {
+              const rate = SPOKEN_REPLIES_RATES.find((candidate) => String(candidate) === value);
+              if (rate !== undefined) {
+                updateSettings({ spokenRepliesRate: rate });
+              }
+            }}
+          >
+            <SelectTrigger
+              className="w-full sm:w-40"
+              aria-label="Speaking rate"
+              disabled={!supported}
+            >
+              <SelectValue>{SPOKEN_REPLIES_RATE_LABELS[settings.spokenRepliesRate]}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              {SPOKEN_REPLIES_RATES.map((rate) => (
+                <SelectItem hideIndicator key={rate} value={String(rate)}>
+                  {SPOKEN_REPLIES_RATE_LABELS[rate]}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        }
+      />
+      <SettingsRow
+        {...searchableSetting("speech-backend-url")}
+        description="OpenAI-compatible text-to-speech endpoint, such as a Kokoro-FastAPI or Speaches server. Leave empty to use this device's system voice. Shared by every device connected to this environment."
+        resetAction={
+          speechDirty ? (
+            <SettingResetButton
+              label="neural voice settings"
+              onClick={() => updateSettings({ speech: DEFAULT_SPEECH_SETTINGS_PATCH })}
+            />
+          ) : null
+        }
+        control={
+          <DraftInput
+            className="w-full sm:w-72"
+            value={settings.speech.textToSpeechUrl}
+            onCommit={(next) => updateSettings({ speech: { textToSpeechUrl: next.trim() } })}
+            placeholder="http://localhost:8890"
+            spellCheck={false}
+            aria-label="Neural voice server URL"
+          />
+        }
+      />
+      <SettingsRow
+        {...searchableSetting("speech-backend-voice")}
+        description="A voice the server knows, for example af_heart or pm_alex."
+        control={
+          <DraftInput
+            className="w-full sm:w-72"
+            value={settings.speech.textToSpeechVoice}
+            onCommit={(next) =>
+              updateSettings({
+                speech: {
+                  textToSpeechVoice:
+                    next.trim() || DEFAULT_UNIFIED_SETTINGS.speech.textToSpeechVoice,
+                },
+              })
+            }
+            placeholder={DEFAULT_UNIFIED_SETTINGS.speech.textToSpeechVoice}
+            spellCheck={false}
+            disabled={!backendConfigured}
+            aria-label="Neural voice name"
+          />
+        }
+      />
+      <SettingsRow
+        {...searchableSetting("speech-backend-model")}
+        description="Model name the server expects in requests."
+        control={
+          <DraftInput
+            className="w-full sm:w-72"
+            value={settings.speech.textToSpeechModel}
+            onCommit={(next) =>
+              updateSettings({
+                speech: {
+                  textToSpeechModel:
+                    next.trim() || DEFAULT_UNIFIED_SETTINGS.speech.textToSpeechModel,
+                },
+              })
+            }
+            placeholder={DEFAULT_UNIFIED_SETTINGS.speech.textToSpeechModel}
+            spellCheck={false}
+            disabled={!backendConfigured}
+            aria-label="Neural voice model"
+          />
+        }
+      />
+      <SettingsRow
+        {...searchableSetting("speech-backend-api-key")}
+        description="Optional. Sent as a bearer token and kept in the server's settings file; it is never sent to clients."
+        resetAction={
+          settings.speech.textToSpeechApiKeyRedacted ? (
+            <SettingResetButton
+              label="API key"
+              onClick={() => updateSettings({ speech: { textToSpeechApiKey: "" } })}
+            />
+          ) : null
+        }
+        control={
+          <DraftInput
+            className="w-full sm:w-72"
+            type="password"
+            // Clients only receive a blank plus the "saved" marker, never the key.
+            value=""
+            onCommit={(next) => {
+              const key = next.trim();
+              if (key.length > 0) updateSettings({ speech: { textToSpeechApiKey: key } });
+            }}
+            placeholder={
+              settings.speech.textToSpeechApiKeyRedacted ? "Saved. Type to replace." : "Optional"
+            }
+            spellCheck={false}
+            autoComplete="off"
+            disabled={!backendConfigured}
+            aria-label="Neural voice API key"
+          />
+        }
+      />
+    </SettingsSection>
+  );
+}
+
 export function GeneralSettingsPanel() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
@@ -2379,6 +2654,7 @@ export function GeneralSettingsPanel() {
         />
       </SettingsSection>
 
+      <SpokenRepliesSection />
       <SettingsSection title="About">
         {isElectron || HOSTED_APP_CHANNEL ? (
           <AboutVersionSection />

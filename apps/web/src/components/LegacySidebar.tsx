@@ -110,6 +110,7 @@ import {
   resolveProjectExpanded,
   useUiStateStore,
 } from "../uiStateStore";
+import { setThreadSpokenReplies } from "../speech/spokenReplies";
 import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
@@ -209,7 +210,7 @@ import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrom
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { CommandDialogTrigger } from "./ui/command";
-import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
+import { getClientSettings, useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { buildThreadActionMenuItems } from "./threadActionMenu.logic";
 import {
@@ -2299,6 +2300,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           canSnoozeNow: false,
           isRegeneratingTitle,
           isRunning: thread.session?.status === "running" && thread.session.activeTurnId != null,
+          readsRepliesAloud:
+            useUiStateStore.getState().threadSpokenRepliesById[
+              scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
+            ] ?? getClientSettings().spokenRepliesEnabled,
           supports: {
             settlement: false,
             snooze: false,
@@ -2401,6 +2406,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         return;
       }
 
+      if (clicked === "spoken-replies-on" || clicked === "spoken-replies-off") {
+        setThreadSpokenReplies(
+          scopeThreadRef(thread.environmentId, thread.id),
+          clicked === "spoken-replies-on",
+        );
+        return;
+      }
       if (clicked === "mark-unread") {
         markThreadUnread(threadKey, thread.latestTurn?.completedAt);
         return;

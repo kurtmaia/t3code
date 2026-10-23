@@ -158,7 +158,18 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
         : instance,
     ]),
   );
-  return { ...settings, providerInstances };
+  const { textToSpeechApiKeyRedacted: _marker, ...speech } = settings.speech;
+  return {
+    ...settings,
+    providerInstances,
+    speech: {
+      ...speech,
+      textToSpeechApiKey: "",
+      ...(settings.speech.textToSpeechApiKey.length > 0
+        ? { textToSpeechApiKeyRedacted: true }
+        : {}),
+    },
+  };
 }
 
 export class ServerSettingsService extends Context.Service<

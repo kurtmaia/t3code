@@ -46,6 +46,9 @@ const clientSettings: ClientSettings = {
   sidebarThreadSortOrder: "created_at",
   sidebarThreadPreviewCount: 6,
   legacySidebarEnabled: false,
+  spokenRepliesEnabled: false,
+  spokenRepliesRate: 1,
+  spokenRepliesVoice: null,
   timestampFormat: "24-hour",
   wordWrap: true,
 };
