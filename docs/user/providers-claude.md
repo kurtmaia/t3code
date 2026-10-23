@@ -34,6 +34,22 @@ When you set this field, T3 Code points Claude Code at that directory with the
 `CLAUDE_CONFIG_DIR` environment variable. It does not change `HOME`, so your system keychain and
 the rest of your environment stay as they are.
 
+## A New Claude Model Just Launched
+
+Upgrade Claude Code, then press Refresh in Settings next to your Claude provider. Whatever models
+Claude Code offers show up in the model picker, including ones released after your copy of T3 Code.
+
+A model T3 Code has not shipped support for yet arrives with the options Claude Code reports for it,
+usually reasoning effort, fast mode, and context window. Models T3 Code already knows keep their
+full set of options.
+
+If a model you expect is missing, check that you are signed in to the account that has access to it
+and that Claude Code offers it under its full `claude-…` id. Claude Code's short labels such as
+`opus` and `sonnet` follow whichever model it currently recommends, so T3 Code ignores them and
+shows its own entry for that model instead. Models T3 Code already knows appear only once your
+Claude Code version is new enough to run them. A model reached through a gateway under another name
+can be added as a custom model in the provider's settings.
+
 ## Where Claude Skills Are Loaded
 
 T3 Code looks for Claude skills in the Claude config directory's `skills` folder, then

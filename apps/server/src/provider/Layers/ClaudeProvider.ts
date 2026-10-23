@@ -2,6 +2,7 @@ import {
   type ClaudeSettings,
   type ModelCapabilities,
   type ModelSelection,
+  ProviderDriverKind,
   type ServerProviderModel,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
@@ -17,12 +18,14 @@ import {
   getModelSelectionStringOptionValue,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
+  normalizeModelSlug,
 } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
   query as claudeQuery,
   type Options as ClaudeQueryOptions,
+  type ModelInfo as ClaudeModelInfo,
   type SlashCommand as ClaudeSlashCommand,
   type SDKUserMessage,
   type SettingSource,
@@ -347,7 +350,7 @@ function supportsClaudeOpus47(version: string | null | undefined): boolean {
   return version ? compareSemverVersions(version, MINIMUM_CLAUDE_OPUS_4_7_VERSION) >= 0 : false;
 }
 
-function getBuiltInClaudeModelsForVersion(
+export function getBuiltInClaudeModelsForVersion(
   version: string | null | undefined,
 ): ReadonlyArray<ServerProviderModel> {
   return BUILT_IN_MODELS.filter((model) => {
@@ -365,6 +368,273 @@ function getBuiltInClaudeModelsForVersion(
     }
     return true;
   });
+}
+
+const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
+
+function isBuiltInClaudeModel(model: string | null | undefined): boolean {
+  return model !== null && model !== undefined && BUILT_IN_MODELS.some((m) => m.slug === model);
+}
+
+/**
+ * Whether a slug names a catalog model, directly or as a dated snapshot of
+ * one (`claude-opus-5-20261015`). The alias table only knows a few dates, and
+ * a dated id is the usual way a configured model is echoed by the CLI, so the
+ * version gate has to recognise it too.
+ */
+function isCatalogClaudeModelOrSnapshot(slug: string): boolean {
+  return isBuiltInClaudeModel(slug) || isBuiltInClaudeModel(slug.replace(/-\d{8}$/, ""));
+}
+
+/** Catalog models whose CLI accepts `xhigh`; older ones get the strongest level they do accept. */
+const BUILT_IN_XHIGH_MODELS: ReadonlySet<string> = new Set([
+  "claude-fable-5",
+  "claude-opus-5",
+  "claude-opus-4-8",
+  "claude-sonnet-5",
+]);
+
+/**
+ * Values the CLI lists that are selector labels rather than models. `default`
+ * follows whatever Claude Code currently recommends, so persisting it as a
+ * thread's model would silently change which model that thread ran on.
+ */
+const CLAUDE_MENU_PSEUDO_MODELS = new Set(["default", "auto"]);
+
+const CLAUDE_EFFORT_LABELS: Record<string, string> = {
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra High",
+  max: "Max",
+};
+
+/**
+ * Capabilities synthesized for models the built-in catalog has never seen,
+ * keyed by slug and refreshed by every provider probe. {@link getClaudeModelCapabilities}
+ * prefers these for a discovered model so the adapter resolves exactly the
+ * options the picker rendered; before a probe has run it falls back to
+ * {@link NON_CATALOG_CLAUDE_MODEL_CAPABILITIES}, which accepts any stored choice.
+ */
+const discoveredClaudeCapabilities = new Map<string, ModelCapabilities>();
+
+/**
+ * Split a CLI model value into a canonical slug plus the context-window variant
+ * baked into it. The CLI reports `claude-opus-5[1m]`; T3 stores `claude-opus-5`
+ * and a `contextWindow` option, and {@link resolveClaudeApiModelId} re-appends
+ * the suffix on the way back out.
+ */
+function parseClaudeModelValue(
+  value: string,
+): { readonly slug: string; readonly contextWindow: string | undefined } | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const variant = trimmed.match(/^(.+?)\[([^\]]+)\]$/);
+  const base = (variant?.[1] ?? trimmed).trim();
+  if (!base || CLAUDE_MENU_PSEUDO_MODELS.has(base.toLowerCase())) {
+    return undefined;
+  }
+
+  // Only a concrete `claude-*` id names a model. Short labels such as `opus`
+  // or `sonnet` are selectors the CLI repoints at newer models over time, so
+  // an old CLI's `opus` must not be read as today's Opus: that would undo the
+  // version gate the catalog relies on.
+  if (!base.toLowerCase().startsWith("claude-")) {
+    return undefined;
+  }
+
+  const slug = normalizeModelSlug(base.toLowerCase(), CLAUDE_DRIVER_KIND);
+  if (!slug || !slug.startsWith("claude-")) {
+    return undefined;
+  }
+
+  return { slug, contextWindow: variant?.[2]?.trim().toLowerCase() };
+}
+
+/**
+ * Name a discovered model the way the catalog names its own entries.
+ *
+ * The CLI's `displayName` is the picker row's label, not the model's name: the
+ * row for `claude-fable-5-1` is called "Fable", which sits next to the catalog's
+ * "Claude Fable 5" looking like a duplicate of it. The slug carries the version
+ * the label drops, so `claude-fable-5-1` becomes "Claude Fable 5.1".
+ *
+ * Returns undefined for a slug that does not split into a family and a version,
+ * leaving the caller to fall back to whatever the CLI reported.
+ */
+function claudeModelDisplayName(slug: string): string | undefined {
+  const segments = slug.split("-");
+  if (segments[0] !== "claude" || segments.length < 3) {
+    return undefined;
+  }
+
+  const family: Array<string> = [];
+  const version: Array<string> = [];
+  const rest = segments.slice(1);
+  rest.forEach((segment, index) => {
+    // Dated ids (`claude-opus-4-1-20250805`) end in a release date the catalog
+    // never shows; older ids put the family after the version
+    // (`claude-3-5-sonnet`), so the two are collected independently.
+    if (index === rest.length - 1 && /^\d{8}$/.test(segment)) {
+      return;
+    }
+    if (/^\d+$/.test(segment)) {
+      version.push(segment);
+    } else {
+      family.push(segment);
+    }
+  });
+
+  if (family.length === 0 || version.length === 0) {
+    return undefined;
+  }
+
+  const familyLabel = family
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ");
+  return `Claude ${familyLabel} ${version.join(".")}`;
+}
+
+function buildDiscoveredClaudeCapabilities(
+  info: ClaudeModelInfo,
+  contextWindows: ReadonlySet<string>,
+): ModelCapabilities {
+  const optionDescriptors = [];
+
+  const effortLevels = info.supportsEffort ? (info.supportedEffortLevels ?? []) : [];
+  if (effortLevels.length > 0) {
+    const options: Array<{
+      value: string;
+      label: string;
+      description?: string;
+      isDefault?: boolean;
+    }> = effortLevels.map((level) => ({
+      value: level,
+      label: CLAUDE_EFFORT_LABELS[level] ?? level,
+      ...(level === "high" ? { isDefault: true } : {}),
+    }));
+    // `ultracode` and `ultrathink` are T3/Claude Code concepts with no field in
+    // the SDK's model info, so they follow the same rule the catalog uses.
+    if (effortLevels.includes("xhigh")) {
+      options.push({
+        value: "ultracode",
+        label: "Ultracode",
+        description: "xhigh effort plus multi-agent workflow orchestration",
+      });
+    }
+    options.push({ value: "ultrathink", label: "Ultrathink" });
+    optionDescriptors.push(
+      buildSelectOptionDescriptor({
+        id: "effort",
+        label: "Reasoning",
+        options,
+        promptInjectedValues: ["ultrathink"],
+      }),
+    );
+  }
+
+  if (info.supportsFastMode) {
+    optionDescriptors.push(buildBooleanOptionDescriptor({ id: "fastMode", label: "Fast Mode" }));
+  }
+
+  if (contextWindows.has("1m")) {
+    // 1M is opt-in in Claude Code and billed separately, so a model the
+    // catalog has never seen starts on the standard window like Sonnet does.
+    optionDescriptors.push(
+      buildSelectOptionDescriptor({
+        id: "contextWindow",
+        label: "Context Window",
+        options: [
+          { value: "200k", label: "200k", isDefault: true },
+          { value: "1m", label: "1M" },
+        ],
+      }),
+    );
+  }
+
+  return createModelCapabilities({ optionDescriptors });
+}
+
+/**
+ * Turn the model list carried by the SDK initialization result into provider
+ * models. The CLI reports one entry per picker row, so several rows can collapse
+ * onto one slug (`opus` and `opus[1m]`); their context-window variants merge.
+ */
+export function parseClaudeInitializationModels(
+  models: ReadonlyArray<ClaudeModelInfo> | undefined,
+): ReadonlyArray<ServerProviderModel> {
+  const bySlug = new Map<
+    string,
+    { readonly info: ClaudeModelInfo; readonly contextWindows: Set<string> }
+  >();
+
+  for (const model of models ?? []) {
+    const parsed = parseClaudeModelValue(model.value);
+    if (!parsed) {
+      continue;
+    }
+
+    const existing = bySlug.get(parsed.slug);
+    if (existing) {
+      if (parsed.contextWindow) {
+        existing.contextWindows.add(parsed.contextWindow);
+      }
+      continue;
+    }
+
+    bySlug.set(parsed.slug, {
+      info: model,
+      contextWindows: new Set(parsed.contextWindow ? [parsed.contextWindow] : []),
+    });
+  }
+
+  return [...bySlug].map(([slug, entry]) => ({
+    slug,
+    name: claudeModelDisplayName(slug) ?? nonEmptyProbeString(entry.info.displayName) ?? slug,
+    isCustom: false,
+    capabilities: buildDiscoveredClaudeCapabilities(entry.info, entry.contextWindows),
+  }));
+}
+
+/**
+ * Add the CLI's live model list to the version-gated catalog.
+ *
+ * Discovery only ever adds slugs the catalog has never seen, appended after
+ * the built-ins so the curated first entry stays the default for new threads.
+ * Catalog models follow the version gate alone: the CLI's list can echo a
+ * model configured in the user's settings or environment regardless of
+ * whether that CLI version runs it, so a listed catalog slug is not evidence
+ * enough to un-gate it. Nothing is removed — the CLI's list reflects the
+ * signed-in account's current entitlements and filesystem settings, and a
+ * model missing from it may still be usable.
+ */
+export function mergeDiscoveredClaudeModels(
+  versionGatedModels: ReadonlyArray<ServerProviderModel>,
+  discoveredModels: ReadonlyArray<ServerProviderModel>,
+): ReadonlyArray<ServerProviderModel> {
+  if (discoveredModels.length === 0) {
+    return versionGatedModels;
+  }
+
+  const seenSlugs = new Set(versionGatedModels.map((model) => model.slug));
+  const unknownModels: Array<ServerProviderModel> = [];
+  for (const model of discoveredModels) {
+    if (seenSlugs.has(model.slug) || isCatalogClaudeModelOrSnapshot(model.slug)) {
+      continue;
+    }
+    seenSlugs.add(model.slug);
+    unknownModels.push(model);
+    if (model.capabilities) {
+      discoveredClaudeCapabilities.set(model.slug, model.capabilities);
+    }
+  }
+
+  return unknownModels.length === 0
+    ? versionGatedModels
+    : [...versionGatedModels, ...unknownModels];
 }
 
 function formatClaudeOpus5UpgradeMessage(version: string | null): string {
@@ -387,11 +657,50 @@ function formatClaudeOpus47UpgradeMessage(version: string | null): string {
   return `Claude Code ${versionLabel} is too old for Claude Opus 4.7. Upgrade to v${MINIMUM_CLAUDE_OPUS_4_7_VERSION} or newer to access it.`;
 }
 
+/**
+ * What the adapter may send for a model outside the catalog when discovery
+ * has not described it: the picker never offers these options for such a
+ * model, but a thread that chose them while the model was discovered keeps
+ * them across a restart, before the probe has run or when it fails. No value
+ * is a default, so an unset option still means "send nothing".
+ */
+const NON_CATALOG_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
+  optionDescriptors: [
+    buildSelectOptionDescriptor({
+      id: "effort",
+      label: "Reasoning",
+      options: [
+        { value: "low", label: "Low" },
+        { value: "medium", label: "Medium" },
+        { value: "high", label: "High" },
+        { value: "xhigh", label: "Extra High" },
+        { value: "max", label: "Max" },
+        { value: "ultracode", label: "Ultracode" },
+        { value: "ultrathink", label: "Ultrathink" },
+      ],
+      promptInjectedValues: ["ultrathink"],
+    }),
+    buildBooleanOptionDescriptor({ id: "fastMode", label: "Fast Mode" }),
+    buildSelectOptionDescriptor({
+      id: "contextWindow",
+      label: "Context Window",
+      options: [
+        { value: "200k", label: "200k" },
+        { value: "1m", label: "1M" },
+      ],
+    }),
+  ],
+});
+
 export function getClaudeModelCapabilities(model: string | null | undefined): ModelCapabilities {
   const slug = model?.trim();
+  if (!slug) {
+    return DEFAULT_CLAUDE_MODEL_CAPABILITIES;
+  }
   return (
     BUILT_IN_MODELS.find((candidate) => candidate.slug === slug)?.capabilities ??
-    DEFAULT_CLAUDE_MODEL_CAPABILITIES
+    discoveredClaudeCapabilities.get(slug) ??
+    NON_CATALOG_CLAUDE_MODEL_CAPABILITIES
   );
 }
 
@@ -428,13 +737,10 @@ export function normalizeClaudeCliEffort(
   if (effort === "ultracode") {
     return "xhigh";
   }
-  if (
-    effort === "xhigh" &&
-    model !== "claude-fable-5" &&
-    model !== "claude-opus-5" &&
-    model !== "claude-opus-4-8" &&
-    model !== "claude-sonnet-5"
-  ) {
+  // Models outside the catalog, discovered or custom, pass `xhigh` through:
+  // the picker only offered it because the CLI reported it, and that must
+  // hold before a probe has run as much as after one.
+  if (effort === "xhigh" && isBuiltInClaudeModel(model) && !BUILT_IN_XHIGH_MODELS.has(model!)) {
     return "max";
   }
   if (effort === "max" && model === "claude-sonnet-4-6") {
@@ -642,6 +948,11 @@ type ClaudeCapabilitiesProbe = {
    */
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  /**
+   * Models the CLI itself offers, unioned into the catalog by the snapshot.
+   * Optional because older CLIs omit the field from their init response.
+   */
+  readonly models?: ReadonlyArray<ServerProviderModel> | undefined;
 };
 
 function parseClaudeInitializationCommands(
@@ -771,6 +1082,7 @@ const probeClaudeCapabilities = (
         tokenSource: account?.tokenSource,
         apiProvider: account?.apiProvider,
         slashCommands: parseClaudeInitializationCommands(init.commands),
+        models: parseClaudeInitializationModels(init.models),
       } satisfies ClaudeCapabilitiesProbe;
     });
   }).pipe(
@@ -908,11 +1220,6 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
-  const models = providerModelsFromSettings(
-    getBuiltInClaudeModelsForVersion(parsedVersion),
-    claudeSettings.customModels,
-    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
-  );
   const versionUpgradeMessage = supportsClaudeOpus5(parsedVersion)
     ? undefined
     : supportsClaudeFable5(parsedVersion)
@@ -929,6 +1236,14 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
   const slashCommands = capabilities?.slashCommands ?? [];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
+  const models = providerModelsFromSettings(
+    mergeDiscoveredClaudeModels(
+      getBuiltInClaudeModelsForVersion(parsedVersion),
+      capabilities?.models ?? [],
+    ),
+    claudeSettings.customModels,
+    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+  );
 
   if (!capabilities) {
     return buildServerProvider({
