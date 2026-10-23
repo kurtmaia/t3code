@@ -1146,8 +1146,9 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           onOpenTurnDiff={ctx.onOpenTurnDiff}
         />
         <AssistantSubThreadAnchors messageId={row.message.id} />
+        {/* Hover reveals the row on a pointer; a touch screen has no hover, so it stays visible there. */}
         {row.showAssistantMeta ? (
-          <div className="mt-1.5 flex items-center gap-2 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant:opacity-100">
+          <div className="mt-1.5 flex items-center gap-2 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant:opacity-100 pointer-coarse:opacity-100">
             <AssistantCopyButton row={row} />
             <AssistantReadAloudButton row={row} />
             {!row.message.streaming && (
