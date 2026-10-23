@@ -17,6 +17,14 @@ describe("speechEndpointUrl", () => {
       "http://mini:8890/v1/audio/speech",
     );
   });
+
+  it("assumes plain http for a host:port typed without a scheme", () => {
+    expect(speechEndpointUrl("192.168.1.10:8890")).toBe("http://192.168.1.10:8890/v1/audio/speech");
+    expect(speechEndpointUrl(" mini:8890/v1 ")).toBe("http://mini:8890/v1/audio/speech");
+    expect(speechEndpointUrl("https://api.openai.com")).toBe(
+      "https://api.openai.com/v1/audio/speech",
+    );
+  });
 });
 
 const collect = (stream: Stream.Stream<Uint8Array, SpeechBackendError>) =>

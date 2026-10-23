@@ -36,9 +36,16 @@ export class SpeechSynthesis extends Context.Service<
   }
 >()("t3/speech/SpeechSynthesis") {}
 
-/** Accepts a bare origin, a `/v1` base, or the full speech path, as users paste all three. */
+/**
+ * Accepts a bare origin, a `/v1` base, or the full speech path, as users
+ * paste all three, and a host:port with no scheme, which a LAN address
+ * usually arrives as; plain http is the norm for a server on the same network.
+ */
 export function speechEndpointUrl(baseUrl: string): string {
-  const trimmed = baseUrl.trim().replace(/\/+$/, "");
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(baseUrl.trim())
+    ? baseUrl.trim()
+    : `http://${baseUrl.trim()}`;
+  const trimmed = withScheme.replace(/\/+$/, "");
   if (trimmed.endsWith("/v1/audio/speech")) return trimmed;
   if (trimmed.endsWith("/v1")) return `${trimmed}/audio/speech`;
   return `${trimmed}/v1/audio/speech`;
