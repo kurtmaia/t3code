@@ -88,12 +88,61 @@ export function unlockVoicePlayer(): void {
   void element.play().catch(() => undefined);
 }
 
+const RIFF_HEADER_BYTES = 12;
+const UNKNOWN_CHUNK_SIZE = 0xffffffff;
+
+/**
+ * A server that streams WAV writes the RIFF and data sizes before it knows
+ * them, as zero or 0xFFFFFFFF. System players shrug; the browser's audio
+ * element refuses the file. With the whole clip in hand the real sizes are
+ * known, so fill them in. Returns the input untouched when it is not a WAV
+ * or already consistent.
+ */
+export function finalizeWavHeader(bytes: Uint8Array): Uint8Array {
+  if (bytes.byteLength < RIFF_HEADER_BYTES) return bytes;
+  const ascii = (offset: number) => String.fromCharCode(...bytes.subarray(offset, offset + 4));
+  if (ascii(0) !== "RIFF" || ascii(8) !== "WAVE") return bytes;
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  const view = new DataView(copy.buffer);
+  let changed = false;
+  const riffSize = view.getUint32(4, true);
+  if (riffSize === 0 || riffSize === UNKNOWN_CHUNK_SIZE || riffSize > copy.byteLength - 8) {
+    view.setUint32(4, copy.byteLength - 8, true);
+    changed = true;
+  }
+  let offset = RIFF_HEADER_BYTES;
+  while (offset + 8 <= copy.byteLength) {
+    const id = ascii(offset);
+    const size = view.getUint32(offset + 4, true);
+    const remaining = copy.byteLength - offset - 8;
+    if (id === "data") {
+      if (size === 0 || size === UNKNOWN_CHUNK_SIZE || size > remaining) {
+        view.setUint32(offset + 4, remaining, true);
+        changed = true;
+      }
+      break;
+    }
+    if (size > remaining) break;
+    offset += 8 + size + (size % 2);
+  }
+  return changed ? copy : bytes;
+}
+
+function mediaErrorDetail(element: HTMLAudioElement): string {
+  const error = element.error;
+  if (!error) return "The audio element could not play the clip.";
+  const message = error.message.length > 0 ? ` (${error.message})` : "";
+  return `The audio element could not play the clip: media error ${error.code}${message}.`;
+}
+
 function playBytes(element: HTMLAudioElement, bytes: Uint8Array): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     releaseObjectUrl();
     // Copy into a plain ArrayBuffer: Blob rejects views over shared memory.
-    const copy = new Uint8Array(bytes.byteLength);
-    copy.set(bytes);
+    const finalized = finalizeWavHeader(bytes);
+    const copy = new Uint8Array(finalized.byteLength);
+    copy.set(finalized);
     const url = URL.createObjectURL(new Blob([copy.buffer], { type: "audio/wav" }));
     activeObjectUrl = url;
     const detach = () => {
@@ -105,9 +154,13 @@ function playBytes(element: HTMLAudioElement, bytes: Uint8Array): Promise<void> 
       detach();
       resolve();
     };
-    const fail = () => {
+    const fail = (cause?: unknown) => {
       detach();
-      reject(new Error("The audio element could not play the clip."));
+      reject(
+        cause instanceof Error && cause.name !== "Event"
+          ? new Error(`${mediaErrorDetail(element)} ${cause.message}`)
+          : new Error(mediaErrorDetail(element)),
+      );
     };
     // Not "emptied": swapping src on an element that still holds the previous
     // clip fires it immediately, which would end every clip after the first.
@@ -115,7 +168,7 @@ function playBytes(element: HTMLAudioElement, bytes: Uint8Array): Promise<void> 
     element.addEventListener("error", fail);
     settleActiveClip = finish;
     element.src = url;
-    element.play().catch(fail);
+    element.play().catch((cause: unknown) => fail(cause));
   });
 }
 
