@@ -118,6 +118,7 @@ import {
 } from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { Textarea } from "../ui/textarea";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThemeLibrary } from "./ThemeSettings";
@@ -1820,7 +1821,47 @@ const DEFAULT_SPEECH_SETTINGS_PATCH = {
   textToSpeechModel: DEFAULT_UNIFIED_SETTINGS.speech.textToSpeechModel,
   textToSpeechVoice: DEFAULT_UNIFIED_SETTINGS.speech.textToSpeechVoice,
   textToSpeechApiKey: DEFAULT_UNIFIED_SETTINGS.speech.textToSpeechApiKey,
+  textToSpeechVoiceRules: DEFAULT_UNIFIED_SETTINGS.speech.textToSpeechVoiceRules,
 };
+
+/**
+ * A small text field that commits on blur, for the voice rules: the server
+ * holds the value, so committing per keystroke would round-trip every key.
+ */
+function VoiceRulesEditor(props: {
+  readonly value: string;
+  readonly disabled: boolean;
+  readonly onCommit: (next: string) => void;
+}) {
+  const [draft, setDraft] = useState(props.value);
+  const lastCommitted = useRef(props.value);
+  const fieldRef = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    if (props.value === lastCommitted.current) return;
+    lastCommitted.current = props.value;
+    // A change from elsewhere must not overwrite text being typed here.
+    if (document.activeElement !== fieldRef.current) setDraft(props.value);
+  }, [props.value]);
+  return (
+    <Textarea
+      ref={fieldRef}
+      className="w-full font-mono text-xs sm:w-72"
+      rows={3}
+      value={draft}
+      disabled={props.disabled}
+      spellCheck={false}
+      placeholder={"claude-fable = bm_fable\nclaude-opus = am_michael"}
+      aria-label="Voice by model"
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={() => {
+        const next = draft.trim();
+        if (next === lastCommitted.current) return;
+        lastCommitted.current = next;
+        props.onCommit(next);
+      }}
+    />
+  );
+}
 
 const SPOKEN_REPLIES_RATE_LABELS: Record<SpokenRepliesRate, string> = {
   0.8: "Slower",
@@ -2001,6 +2042,17 @@ function SpokenRepliesSection() {
             spellCheck={false}
             disabled={!backendConfigured}
             aria-label="Neural voice name"
+          />
+        }
+      />
+      <SettingsRow
+        {...searchableSetting("speech-backend-voice-rules")}
+        description="One line per rule, model prefix = voice, for agents that should sound different. The first matching line wins; models without a match use the voice above."
+        control={
+          <VoiceRulesEditor
+            value={settings.speech.textToSpeechVoiceRules}
+            disabled={!backendConfigured}
+            onCommit={(next) => updateSettings({ speech: { textToSpeechVoiceRules: next } })}
           />
         }
       />

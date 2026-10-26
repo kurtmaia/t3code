@@ -13,11 +13,12 @@ export const speechEnvironment = createSpeechEnvironmentAtoms(connectionAtomRunt
 export async function synthesizeSpeechClip(
   environmentId: EnvironmentId,
   text: string,
+  voice?: string,
 ): Promise<Uint8Array> {
   const result = await runAtomCommand(
     appAtomRegistry,
     speechEnvironment.synthesize,
-    { environmentId, input: { text } },
+    { environmentId, input: voice === undefined ? { text } : { text, voice } },
     { label: "speech:synthesize", reportFailure: false, reportDefect: false },
   );
   if (AsyncResult.isSuccess(result)) {

@@ -391,6 +391,7 @@ describe("ServerSettings speech backend", () => {
       textToSpeechModel: "kokoro",
       textToSpeechVoice: "af_heart",
       textToSpeechApiKey: "",
+      textToSpeechVoiceRules: "",
     });
   });
 

@@ -131,6 +131,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "speech-backend-voice-rules",
+    title: "Voice by model",
+    to: "/settings/general",
+  },
+  {
     id: "speech-backend-model",
     title: "Neural voice model",
     to: "/settings/general",

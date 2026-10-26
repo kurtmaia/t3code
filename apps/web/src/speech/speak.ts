@@ -22,7 +22,7 @@ export interface SpeakOptions {
   readonly voiceURI: string | null;
   readonly rate: number;
   /** When set, the environment's configured speech backend renders the audio. */
-  readonly backend: { readonly environmentId: EnvironmentId } | null;
+  readonly backend: { readonly environmentId: EnvironmentId; readonly voice?: string } | null;
   /** Called once when the backend fails and the system voice takes over. */
   readonly onBackendFailure?: (message: string) => void;
   /** What is being read (a message id, say) so the matching button can offer Stop. */
@@ -44,27 +44,27 @@ export function speak(text: string, options: SpeakOptions): void {
     speakWithSystemVoice(trimmed, { voiceURI: options.voiceURI, rate: options.rate });
     return;
   }
-  const { environmentId } = options.backend;
-  void playSynthesizedSpeech(trimmed, (clip) => synthesizeSpeechClip(environmentId, clip)).catch(
-    (error: unknown) => {
-      const playback = error instanceof VoicePlaybackError ? error : null;
-      // A failure from a playback the user already stopped or replaced must
-      // neither warn nor speak over whatever replaced it.
-      if (playback !== null && !isCurrentSpeechGeneration(playback.generation)) return;
-      const detail =
-        playback?.cause instanceof Error
-          ? playback.cause.message
-          : error instanceof Error
-            ? error.message
-            : String(error);
-      options.onBackendFailure?.(detail);
-      if (playback === null || playback.playedClips === 0) {
-        speakWithSystemVoice(trimmed, { voiceURI: options.voiceURI, rate: options.rate });
-      } else {
-        setSpeaking(false);
-      }
-    },
-  );
+  const { environmentId, voice } = options.backend;
+  void playSynthesizedSpeech(trimmed, (clip) =>
+    synthesizeSpeechClip(environmentId, clip, voice),
+  ).catch((error: unknown) => {
+    const playback = error instanceof VoicePlaybackError ? error : null;
+    // A failure from a playback the user already stopped or replaced must
+    // neither warn nor speak over whatever replaced it.
+    if (playback !== null && !isCurrentSpeechGeneration(playback.generation)) return;
+    const detail =
+      playback?.cause instanceof Error
+        ? playback.cause.message
+        : error instanceof Error
+          ? error.message
+          : String(error);
+    options.onBackendFailure?.(detail);
+    if (playback === null || playback.playedClips === 0) {
+      speakWithSystemVoice(trimmed, { voiceURI: options.voiceURI, rate: options.rate });
+    } else {
+      setSpeaking(false);
+    }
+  });
 }
 
 export function stopSpeaking(): void {

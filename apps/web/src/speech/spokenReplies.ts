@@ -1,5 +1,5 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { toSpeakableText } from "@t3tools/client-runtime/speech";
+import { resolveSpeechVoice, toSpeakableText } from "@t3tools/client-runtime/speech";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
@@ -7,6 +7,7 @@ import { getClientSettings, updateClientSettings } from "../hooks/useSettings";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { serverEnvironment } from "../state/server";
+import { readThreadShell } from "../state/entities";
 import { useUiStateStore } from "../uiStateStore";
 import { speak, stopSpeaking } from "./speak";
 import { unlockVoicePlayer } from "./voicePlayer";
@@ -16,12 +17,23 @@ export const SPOKEN_REPLIES_SAMPLE = "This is how replies will sound.";
 
 export interface SpeechBackendTarget {
   readonly environmentId: EnvironmentId;
+  /** Voice chosen by the environment's per-model rules; undefined means its default voice. */
+  readonly voice?: string;
 }
 
 /** The environment's speech backend, if it has one configured. */
-export function resolveSpeechBackend(environmentId: EnvironmentId): SpeechBackendTarget | null {
+export function resolveSpeechBackend(
+  environmentId: EnvironmentId,
+  model?: string | null,
+): SpeechBackendTarget | null {
   const settings = appAtomRegistry.get(serverEnvironment.settingsValueAtom(environmentId));
-  return settings && settings.speech.textToSpeechUrl.length > 0 ? { environmentId } : null;
+  if (!settings || settings.speech.textToSpeechUrl.length === 0) return null;
+  const voice = resolveSpeechVoice(settings.speech.textToSpeechVoiceRules, model);
+  return voice === undefined ? { environmentId } : { environmentId, voice };
+}
+
+function readThreadModel(threadRef: ScopedThreadRef): string | null {
+  return readThreadShell(threadRef)?.modelSelection.model ?? null;
 }
 
 /** The primary environment's backend, for surfaces that have no thread in hand. */
@@ -47,7 +59,7 @@ export function setThreadSpokenReplies(threadRef: ScopedThreadRef, enabled: bool
   if (enabled) {
     speakCurrentVoice(
       SPOKEN_REPLIES_ON_CONFIRMATION,
-      resolveSpeechBackend(threadRef.environmentId),
+      resolveSpeechBackend(threadRef.environmentId, readThreadModel(threadRef)),
     );
   }
 }
@@ -63,12 +75,13 @@ export function readAloud(
   environmentId: EnvironmentId | null,
   markdown: string,
   sourceId: string | null = null,
+  model: string | null = null,
 ): void {
   const { text } = toSpeakableText(markdown, { maxChars: Number.POSITIVE_INFINITY });
   if (text.length === 0) return;
   speakCurrentVoice(
     text,
-    environmentId === null ? null : resolveSpeechBackend(environmentId),
+    environmentId === null ? null : resolveSpeechBackend(environmentId, model),
     sourceId,
   );
 }
@@ -95,7 +108,10 @@ export function speakCurrentVoice(
         stackedThreadToast({
           type: "warning",
           title: "Neural voice unavailable, using the system voice",
-          description: message,
+          description:
+            backend?.voice === undefined
+              ? message
+              : `${message} The voice "${backend.voice}" comes from your voice rules; check the server offers it.`,
         }),
       );
     },

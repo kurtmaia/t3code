@@ -81,6 +81,7 @@ import { shouldAutoExpandChangedFiles } from "./changedFilesPresentation";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { stopSpeaking, useSpeakingSource } from "../../speech/speak";
 import { readAloud } from "../../speech/spokenReplies";
+import { readThreadShell } from "~/state/entities";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
@@ -1241,10 +1242,15 @@ function AssistantReadAloudButton({ row }: { row: Extract<TimelineRow, { kind: "
               if (speaking) {
                 stopSpeaking();
               } else {
+                // Read at click time: subscribing every row to the shell would
+                // re-render all of them on each thread event.
                 readAloud(
                   ctx.activeThreadEnvironmentId,
                   copyState.text ?? row.message.text ?? "",
                   row.message.id,
+                  ctx.threadRef
+                    ? (readThreadShell(ctx.threadRef)?.modelSelection.model ?? null)
+                    : null,
                 );
               }
             }}

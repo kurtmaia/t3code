@@ -529,6 +529,17 @@ describe("applyServerSettingsPatch speech key", () => {
     expect("textToSpeechApiKeyRedacted" in next.speech).toBe(false);
   });
 
+  it("keeps the voice rules when a patch echoes the redacted key marker", () => {
+    const next = applyServerSettingsPatch(stored, {
+      speech: {
+        textToSpeechVoiceRules: "claude-fable = bm_daniel",
+        textToSpeechApiKeyRedacted: true,
+      },
+    });
+    expect(next.speech.textToSpeechVoiceRules).toBe("claude-fable = bm_daniel");
+    expect(next.speech.textToSpeechApiKey).toBe("stored-key");
+  });
+
   it("replaces or clears the key when a patch states it plainly", () => {
     expect(
       applyServerSettingsPatch(stored, { speech: { textToSpeechApiKey: "new-key" } }).speech

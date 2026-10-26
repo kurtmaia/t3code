@@ -1583,10 +1583,11 @@ function ChatViewContent(props: ChatViewProps) {
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const activeThreadId = activeThread?.id ?? null;
   const activeThreadEnvironmentId = activeThread?.environmentId ?? null;
+  const activeThreadModel = activeThread?.modelSelection.model ?? null;
   const readSelectionAloud = useCallback(
     ({ messageId, quoteText }: { messageId: string; quoteText: string }) =>
-      readAloud(activeThreadEnvironmentId, quoteText, messageId),
-    [activeThreadEnvironmentId],
+      readAloud(activeThreadEnvironmentId, quoteText, messageId, activeThreadModel),
+    [activeThreadEnvironmentId, activeThreadModel],
   );
   const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: activeThread?.environmentId ?? null,
