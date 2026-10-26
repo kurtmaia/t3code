@@ -63,6 +63,22 @@ describe("finalizeWavHeader", () => {
     expect(view.getUint32(40, true)).toBe(100);
   });
 
+  it("walks past an odd-sized chunk before data and clamps an oversized data size", () => {
+    const base = wav(0xffffffff, 0xffffffff, 100);
+    // Insert a 5-byte LIST chunk (padded to 6) between fmt and data.
+    const list = new Uint8Array([76, 73, 83, 84, 5, 0, 0, 0, 1, 2, 3, 4, 5, 0]);
+    const bytes = new Uint8Array(36 + list.length + 8 + 100);
+    bytes.set(base.subarray(0, 36), 0);
+    bytes.set(list, 36);
+    bytes.set(base.subarray(36), 36 + list.length);
+    const view = new DataView(bytes.buffer);
+    view.setUint32(36 + list.length + 4, 5_000_000, true);
+    const fixed = finalizeWavHeader(bytes);
+    const fixedView = new DataView(fixed.buffer);
+    expect(fixedView.getUint32(36 + list.length + 4, true)).toBe(100);
+    expect(fixedView.getUint32(4, true)).toBe(bytes.byteLength - 8);
+  });
+
   it("leaves a consistent header and non-wav bytes alone", () => {
     const good = wav(44 + 100 - 8, 100, 100);
     expect(finalizeWavHeader(good)).toBe(good);

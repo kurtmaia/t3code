@@ -157,7 +157,7 @@ function playBytes(element: HTMLAudioElement, bytes: Uint8Array): Promise<void> 
     const fail = (cause?: unknown) => {
       detach();
       reject(
-        cause instanceof Error && cause.name !== "Event"
+        cause instanceof Error
           ? new Error(`${mediaErrorDetail(element)} ${cause.message}`)
           : new Error(mediaErrorDetail(element)),
       );

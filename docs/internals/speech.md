@@ -54,8 +54,12 @@ hold them:
   It requires `orchestration:read`.
 - Server: `apps/server/src/speech/SpeechSynthesis.ts` posts an OpenAI-shaped request
   (`model`, `input`, `voice`, `response_format: "wav"`) to `<url>/v1/audio/speech`, accepting a
-  bare origin, a `/v1` base, or the full path, and streams the response through unchanged.
+  bare origin, a `/v1` base, the full path, or a host:port with no scheme (http is assumed, https
+  once an API key is set), and streams the response through unchanged.
   Kokoro-FastAPI, Speaches, and OpenAI all answer this shape.
+- Playback: streaming servers write placeholder RIFF/data sizes; `voicePlayer.ts` finalizes them
+  from the collected clip before handing the bytes to the audio element. The desktop renderer's
+  content policy allows `media-src 'self' blob: data:` for that element and the silent unlock clip.
 - Client: `packages/client-runtime/src/state/speechSynthesisHttp.ts` collects the stream over the
   prepared environment HTTP connection, and `state/speech.ts` exposes it as an environment
   command, mirroring the pull-request diff loader.
