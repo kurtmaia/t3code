@@ -17,6 +17,23 @@ describe("speechEndpointUrl", () => {
       "http://mini:8890/v1/audio/speech",
     );
   });
+
+  it("assumes https for a bare host when a key would travel with the request", () => {
+    expect(speechEndpointUrl("api.openai.com", { hasApiKey: true })).toBe(
+      "https://api.openai.com/v1/audio/speech",
+    );
+    expect(speechEndpointUrl("http://tts.lan:8890", { hasApiKey: true })).toBe(
+      "http://tts.lan:8890/v1/audio/speech",
+    );
+  });
+
+  it("assumes plain http for a host:port typed without a scheme", () => {
+    expect(speechEndpointUrl("192.168.1.10:8890")).toBe("http://192.168.1.10:8890/v1/audio/speech");
+    expect(speechEndpointUrl(" mini:8890/v1 ")).toBe("http://mini:8890/v1/audio/speech");
+    expect(speechEndpointUrl("https://api.openai.com")).toBe(
+      "https://api.openai.com/v1/audio/speech",
+    );
+  });
 });
 
 const collect = (stream: Stream.Stream<Uint8Array, SpeechBackendError>) =>

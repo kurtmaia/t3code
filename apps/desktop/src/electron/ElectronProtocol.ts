@@ -87,6 +87,9 @@ export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrat
     `script-src ${scriptSources.join(" ")}`,
     `connect-src ${connectSources.join(" ")}`,
     `img-src 'self' ${input.scheme}: blob: data: http: https:`,
+    // Spoken replies play synthesized clips from blob: URLs and unlock audio
+    // with a data: clip; remote media stays refused.
+    "media-src 'self' blob: data:",
     "style-src 'self' 'unsafe-inline'",
     `font-src 'self' ${input.scheme}: data:`,
     "worker-src 'self' blob:",

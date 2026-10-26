@@ -12,8 +12,8 @@ import { splitPullRequestBody } from "./pullRequestMarkdown.logic";
  * The card links out instead of playing in place, because nothing here can play. A
  * `github.com/user-attachments/assets/…` link is a 302 to a signed S3 URL that serves the file
  * as uploaded — `video/quicktime` for anything recorded on a Mac, which no Chromium decodes —
- * and the desktop window's content policy declares no `media-src`, so media falls back to
- * `default-src 'self'` and every remote source is refused before a byte is fetched. A player
+ * and the desktop window's content policy allows media only from the app itself and from local
+ * blob and data URLs, so every remote source is refused before a byte is fetched. A player
  * here can only be the box that never fills in; a card that opens the host is a real answer.
  */
 export function PullRequestMarkdown({

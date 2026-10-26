@@ -36,9 +36,22 @@ export class SpeechSynthesis extends Context.Service<
   }
 >()("t3/speech/SpeechSynthesis") {}
 
-/** Accepts a bare origin, a `/v1` base, or the full speech path, as users paste all three. */
-export function speechEndpointUrl(baseUrl: string): string {
-  const trimmed = baseUrl.trim().replace(/\/+$/, "");
+/**
+ * Accepts a bare origin, a `/v1` base, or the full speech path, as users
+ * paste all three, and a host:port with no scheme, which a LAN address
+ * usually arrives as. Without a key the server is assumed to be on the local
+ * network over plain http; with a key, https, so a bare `api.openai.com`
+ * never sends the key in the clear.
+ */
+export function speechEndpointUrl(
+  baseUrl: string,
+  options?: { readonly hasApiKey?: boolean },
+): string {
+  const typed = baseUrl.trim();
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(typed)
+    ? typed
+    : `${options?.hasApiKey ? "https" : "http"}://${typed}`;
+  const trimmed = withScheme.replace(/\/+$/, "");
   if (trimmed.endsWith("/v1/audio/speech")) return trimmed;
   if (trimmed.endsWith("/v1")) return `${trimmed}/audio/speech`;
   return `${trimmed}/v1/audio/speech`;
@@ -72,7 +85,9 @@ const make = Effect.gen(function* () {
     if (speech.textToSpeechUrl.length === 0) {
       return yield* new SpeechBackendNotConfiguredError();
     }
-    const url = speechEndpointUrl(speech.textToSpeechUrl);
+    const url = speechEndpointUrl(speech.textToSpeechUrl, {
+      hasApiKey: speech.textToSpeechApiKey.length > 0,
+    });
     const request = yield* HttpClientRequest.post(url)
       .pipe(
         HttpClientRequest.setHeader("accept", "audio/wav"),
