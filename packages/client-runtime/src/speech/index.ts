@@ -15,3 +15,4 @@ export {
   type SpokenReplyTurnState,
   type SpokenUtterance,
 } from "./spokenReplyPolicy.ts";
+export { parseSpeechVoiceRules, resolveSpeechVoice, type SpeechVoiceRule } from "./voiceRules.ts";

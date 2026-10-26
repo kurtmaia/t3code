@@ -1,6 +1,7 @@
 import type { EnvironmentThread } from "@t3tools/client-runtime/state/models";
 import {
   advanceSpokenReplies,
+  resolveSpeechVoice,
   toSpeakableText,
   type SpokenReplyCursor,
   type SpokenReplyThreadView,
@@ -21,6 +22,7 @@ const selectVoice = (settings: { spokenRepliesVoice: string | null }) =>
   settings.spokenRepliesVoice;
 const selectRate = (settings: { spokenRepliesRate: number }) => settings.spokenRepliesRate;
 const selectBackendUrl = (settings: UnifiedSettings) => settings.speech.textToSpeechUrl;
+const selectVoiceRules = (settings: UnifiedSettings) => settings.speech.textToSpeechVoiceRules;
 
 const FALLBACK_ENVIRONMENT_ID = EnvironmentId.make(PRIMARY_LOCAL_ENVIRONMENT_ID);
 
@@ -46,28 +48,43 @@ export function useSpokenReplies(input: {
     environmentId ?? FALLBACK_ENVIRONMENT_ID,
     selectBackendUrl,
   );
-  const backend = useMemo(
-    () => (environmentId !== null && backendUrl.length > 0 ? { environmentId } : null),
-    [backendUrl, environmentId],
+  const voiceRules = useEnvironmentSettings(
+    environmentId ?? FALLBACK_ENVIRONMENT_ID,
+    selectVoiceRules,
   );
+  const model = input.thread?.modelSelection.model ?? null;
+  const backend = useMemo(() => {
+    if (environmentId === null || backendUrl.length === 0) return null;
+    const voice = resolveSpeechVoice(voiceRules, model);
+    return voice === undefined ? { environmentId } : { environmentId, voice };
+  }, [backendUrl, environmentId, model, voiceRules]);
   const cursorRef = useRef<SpokenReplyCursor | null>(null);
   const shownThreadKeyRef = useRef<string | null>(null);
-  const warnedBackendRef = useRef(false);
   const latestTurn = input.thread?.latestTurn ?? null;
   const messages = input.thread?.messages ?? null;
 
-  // One warning per session: a backend outage should not toast on every reply.
-  const onBackendFailure = useCallback((message: string) => {
-    if (warnedBackendRef.current) return;
-    warnedBackendRef.current = true;
-    toastManager.add(
-      stackedThreadToast({
-        type: "warning",
-        title: "Neural voice unavailable, using the system voice",
-        description: message,
-      }),
-    );
-  }, []);
+  // One warning per session per voice: a backend outage should not toast on
+  // every reply, but a misspelled voice in the rules must still get named.
+  const warnedVoicesRef = useRef<Set<string>>(new Set());
+  const ruleVoice = backend?.voice ?? null;
+  const onBackendFailure = useCallback(
+    (message: string) => {
+      const key = ruleVoice ?? "";
+      if (warnedVoicesRef.current.has(key)) return;
+      warnedVoicesRef.current.add(key);
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: "Neural voice unavailable, using the system voice",
+          description:
+            ruleVoice === null
+              ? message
+              : `${message} The voice "${ruleVoice}" comes from your voice rules; check the server offers it.`,
+        }),
+      );
+    },
+    [ruleVoice],
+  );
 
   const view = useMemo<SpokenReplyThreadView | null>(() => {
     if (input.threadKey === null || messages === null) return null;

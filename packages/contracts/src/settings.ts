@@ -642,6 +642,13 @@ export const SpeechSettings = Schema.Struct({
   ),
   textToSpeechApiKey: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   /**
+   * One rule per line, `model-prefix = voice`, matched against a thread's
+   * model slug so different agents can speak with different voices; the first
+   * matching line wins and unmatched models use `textToSpeechVoice`. Kept as
+   * text because settings patches merge arrays element by element.
+   */
+  textToSpeechVoiceRules: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /**
    * Set on the copy sent to clients when a key is stored: the key itself is
    * blanked on the wire, and a patch carrying this marker leaves it untouched.
    */
@@ -924,6 +931,7 @@ export const ServerSettingsPatch = Schema.Struct({
       textToSpeechModel: Schema.optionalKey(TrimmedString),
       textToSpeechVoice: Schema.optionalKey(TrimmedString),
       textToSpeechApiKey: Schema.optionalKey(TrimmedString),
+      textToSpeechVoiceRules: Schema.optionalKey(TrimmedString),
       textToSpeechApiKeyRedacted: Schema.optionalKey(Schema.Boolean),
     }),
   ),

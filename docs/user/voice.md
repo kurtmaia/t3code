@@ -64,6 +64,22 @@ has its own settings file. Replies are rendered a sentence or two at a time, so 
 second after the turn finishes. If the server cannot be reached, the reply falls back to the
 system voice and a notice explains why, once per session.
 
+## A voice per agent
+
+With a neural voice server set, different models can speak with different voices. Under **Voice by
+model**, enter one rule per line as `model prefix = voice`, for example:
+
+```
+claude-fable = bm_daniel
+claude-opus = am_michael
+```
+
+A rule matches when it is the start of a thread's model id, ignoring any provider name before a
+`/`; the longest matching rule wins, so `claude-opus-5` and `claude-opus-5-5` can both have one.
+Models without a match use the voice above the rules. Ask the server for its voice names with
+`GET /v1/audio/voices`; a voice costs nothing extra to use, since every voice runs on the same
+model.
+
 ## Where it works
 
 Spoken replies use the speech voices built into your browser or the desktop app and need no

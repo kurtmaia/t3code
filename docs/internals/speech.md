@@ -46,7 +46,9 @@ The server owns the backend address and key so clients, including phones on a tu
 hold them:
 
 - Settings: `ServerSettings.speech` (`textToSpeechUrl`, `textToSpeechModel`, `textToSpeechVoice`,
-  `textToSpeechApiKey`) in `packages/contracts/src/settings.ts`. An empty URL means "system
+  `textToSpeechApiKey`, `textToSpeechVoiceRules`) in `packages/contracts/src/settings.ts`. The
+  rules are text, one `prefix = voice` per line, resolved on the client by
+  `packages/client-runtime/src/speech/voiceRules.ts` with the longest matching prefix winning. An empty URL means "system
   voices". The key is stored in plain text like other provider credentials in `settings.json`.
 - Contract: `POST /api/speech/synthesize` in the `speech` group of `EnvironmentHttpApi`
   (`packages/contracts/src/environmentHttp.ts`), payload `SpeechSynthesizeInput`, success a
